@@ -8,6 +8,7 @@ let cameraConnected = false;
 let currentIso = "Auto";
 let currentShutter = "Auto";
 let targetLiveViewFps = Math.max(1, Math.min(30, config.LIVEVIEW_FALLBACK_FPS));
+let liveViewGeneration = 0;
 
 const cameraArgs = (args) => {
     if (!config.CAMERA_PORT) return args;
@@ -125,9 +126,8 @@ async function capturePhoto(targetFolder) {
             // 5. Kembalikan mode LiveView jika sebelumnya menyala
             if (wasLiveViewActive && globalOnFrameCallback) {
                 console.log(`📸 [LINUX CAMERA] Melanjutkan LiveView kembali...`);
-                isLiveViewActive = true;
-                // Beri jeda 1 detik agar mekanik lensa kamera rileks sebelum buka mirror lagi
-                setTimeout(() => captureNextFrame(globalOnFrameCallback), 1000); 
+                // Beri jeda agar mekanik kamera rileks sebelum masuk LiveView kembali.
+                setTimeout(() => startLiveView(globalOnFrameCallback), 1500);
             }
             
             resolve(filePath);
@@ -233,15 +233,34 @@ function startLiveView(onFrameCallback) {
     if (isLiveViewActive) return;
     isLiveViewActive = true;
     globalOnFrameCallback = onFrameCallback;
+    const generation = ++liveViewGeneration;
     console.log(`📹 [LINUX CAMERA] Memulai streaming LiveView...`);
-    
+
     isCapturingFrame = false;
-    captureNextFrame(onFrameCallback);
+    // Aktifkan mode LiveView Canon sebelum meminta preview berulang.
+    runGphoto(['--set-config', 'viewfinder=1'], { timeout: 5000 }, (err) => {
+        if (err) {
+            console.log(`⚠️ [LINUX CAMERA] Gagal mengaktifkan viewfinder: ${err.message}`);
+        }
+        if (!isLiveViewActive || generation !== liveViewGeneration) return;
+        // Beri waktu sensor dan mekanik kamera untuk stabil.
+        setTimeout(() => {
+            if (isLiveViewActive && generation === liveViewGeneration) {
+                captureNextFrame(onFrameCallback);
+            }
+        }, 1500);
+    });
 }
 
 function stopLiveView() {
     isLiveViewActive = false;
+    liveViewGeneration += 1;
     console.log(`⏹️ [LINUX CAMERA] LiveView dihentikan.`);
+    runGphoto(['--set-config', 'viewfinder=0'], { timeout: 5000 }, (err) => {
+        if (err) {
+            console.log(`⚠️ [LINUX CAMERA] Gagal menonaktifkan viewfinder: ${err.message}`);
+        }
+    });
 }
 
 /**
