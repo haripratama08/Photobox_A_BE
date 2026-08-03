@@ -91,7 +91,7 @@ const runPreflight = async () => {
                 ? `Port kamera ${config.CAMERA_PORT}`
                 : 'Belum dikunci (isi CAMERA_PORT untuk 3 kamera)'
         },
-        printer: { ...printer, required: true },
+        printer: { ...printer, required: config.REQUIRE_PRINTER },
         storage: { ...storage, required: true },
         frames: { ...frames, required: true },
         whatsapp: {

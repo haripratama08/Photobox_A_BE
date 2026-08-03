@@ -47,6 +47,7 @@ module.exports = {
     PRINTER_NAME: process.env.PRINTER_NAME || "L8050_Series_Network",
     CAMERA_PORT: process.env.CAMERA_PORT || '',
     REQUIRE_CAMERA_PORT: process.env.REQUIRE_CAMERA_PORT !== 'false',
+    REQUIRE_PRINTER: process.env.REQUIRE_PRINTER !== 'false',
     VIDEO_DEVICE: process.env.VIDEO_DEVICE || '/dev/video0',
     PREVIEW_FILE: process.env.PREVIEW_FILE || `/tmp/photobox-${boxSlug}-preview.jpg`,
     DASHBOARD_URL: process.env.DASHBOARD_URL || 'http://127.0.0.1:4000',
