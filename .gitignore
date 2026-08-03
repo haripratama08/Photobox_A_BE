@@ -1,5 +1,13 @@
 node_modules/
 .env
+.env.*
+!.env.example
 .wwebjs_auth/
 .wwebjs_cache/
 Session1/
+photos_storage/
+state/
+*.db
+*.sqlite
+*.sqlite3
+*.log
