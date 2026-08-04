@@ -266,10 +266,6 @@ function getLiveViewState() {
 
 function startLiveView(onFrameCallback) {
     if (isLiveViewActive) return;
-    if (!fs.existsSync(config.VIDEO_DEVICE)) {
-        console.log(`⚠️ [LINUX CAMERA] LiveView tidak dimulai: perangkat video ${config.VIDEO_DEVICE} belum tersedia.`);
-        return;
-    }
     isLiveViewActive = true;
     globalOnFrameCallback = onFrameCallback;
     const generation = ++liveViewGeneration;
