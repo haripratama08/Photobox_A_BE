@@ -36,8 +36,10 @@ async function getStatus() {
     }
 
     return new Promise((resolve) => {
-        runGphoto(['--summary'], { timeout: 8000 }, (error, stdout) => {
-            if (!error && stdout && !stdout.toLowerCase().includes('error')) {
+        // Health check tidak boleh memakai --summary karena membuka sesi PTP
+        // baru dan dapat mengunci Canon saat worker kamera sedang aktif.
+        runGphoto(['--auto-detect'], { timeout: 5000 }, (error, stdout) => {
+            if (!error && stdout && /Canon|EOS/i.test(stdout)) {
                 cameraConnected = true;
                 return resolve({
                     connected: true,
