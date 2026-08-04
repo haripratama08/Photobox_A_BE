@@ -233,6 +233,13 @@ function getLiveViewState() {
 
 function startLiveView(onFrameCallback) {
     if (isLiveViewActive) return;
+    // Safety lock: repeated gphoto2 capture-preview on some Canon bodies can
+    // trigger the shutter/mirror repeatedly. Keep DSLR LiveView disabled until
+    // a camera-specific streaming backend is configured.
+    console.log(`⚠️ [LINUX CAMERA] LiveView DSLR dinonaktifkan sementara untuk mencegah shutter berulang.`);
+    isLiveViewActive = false;
+    return;
+    /* istanbul ignore next */
     isLiveViewActive = true;
     globalOnFrameCallback = onFrameCallback;
     const generation = ++liveViewGeneration;
