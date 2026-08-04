@@ -65,6 +65,7 @@ async function getStatus() {
 // --- SISTEM MUTEX LOCK ---
 let isCameraBusy = false;
 let isCapturingFrame = false; // Status untuk loop LiveView
+let captureInProgress = false; // Mencegah double-tap/dua request memicu dua jepretan
 let globalOnFrameCallback = null; // Menyimpan callback LiveView
 
 const waitForCamera = async () => {
@@ -78,6 +79,14 @@ const waitForCamera = async () => {
  * Saat foto disimpan ke folder utama, watcher.js akan mendeteksi dan mengompresnya secara otomatis.
  */
 async function capturePhoto(targetFolder) {
+    // Kunci harus dipasang sebelum await. Jika dipasang setelah waitForCamera(),
+    // dua request yang datang bersamaan bisa sama-sama lolos dan menjepret dua kali.
+    if (captureInProgress || isCameraBusy) {
+        console.log(`⚠️ [LINUX CAMERA] Permintaan foto diabaikan: kamera masih memproses foto sebelumnya.`);
+        return null;
+    }
+    captureInProgress = true;
+
     // 1. Tunggu sampai gphoto2 sebelumnya (LiveView) selesai
     await waitForCamera();
     
@@ -132,6 +141,7 @@ async function capturePhoto(targetFolder) {
                 setTimeout(() => startLiveView(globalOnFrameCallback), 1500);
             }
             
+            captureInProgress = false;
             resolve(filePath);
         });
     });
