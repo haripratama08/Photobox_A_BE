@@ -170,6 +170,27 @@ function captureNextFrame(onFrameCallback) {
     // Berhenti jika dimatikan atau jika kamera sedang dijepret (Lock)
     if (!isLiveViewActive) return;
     if (isCapturingFrame || isCameraBusy) return; 
+
+    // LiveView Linux menggunakan USB HDMI capture/V4L2, bukan gphoto2.
+    // Ini menjaga sesi PTP kamera tetap bebas dari polling preview.
+    if (fs.existsSync(config.VIDEO_DEVICE)) {
+        isCapturingFrame = true;
+        const cycleStartedAt = Date.now();
+        execFile('ffmpeg', [
+            '-loglevel', 'error', '-y', '-f', 'video4linux2',
+            '-i', config.VIDEO_DEVICE, '-frames:v', '1', '-f', 'image2pipe', '-'
+        ], { encoding: 'buffer', timeout: 5000, maxBuffer: 20 * 1024 * 1024 }, (err, stdout) => {
+            if (!err && stdout && stdout.length > 100 && isLiveViewActive && !isCameraBusy) {
+                onFrameCallback(stdout.toString('base64'));
+            }
+            isCapturingFrame = false;
+            if (isLiveViewActive && !isCameraBusy) {
+                const delay = Math.max(0, Math.round(1000 / targetLiveViewFps) - (Date.now() - cycleStartedAt));
+                setTimeout(() => captureNextFrame(onFrameCallback), delay);
+            }
+        });
+        return;
+    }
     
     isCapturingFrame = true;
     const cycleStartedAt = Date.now();
@@ -243,13 +264,10 @@ function getLiveViewState() {
 
 function startLiveView(onFrameCallback) {
     if (isLiveViewActive) return;
-    // Safety lock: repeated gphoto2 capture-preview on some Canon bodies can
-    // trigger the shutter/mirror repeatedly. Keep DSLR LiveView disabled until
-    // a camera-specific streaming backend is configured.
-    console.log(`⚠️ [LINUX CAMERA] LiveView DSLR dinonaktifkan sementara untuk mencegah shutter berulang.`);
-    isLiveViewActive = false;
-    return;
-    /* istanbul ignore next */
+    if (!fs.existsSync(config.VIDEO_DEVICE)) {
+        console.log(`⚠️ [LINUX CAMERA] LiveView tidak dimulai: perangkat video ${config.VIDEO_DEVICE} belum tersedia.`);
+        return;
+    }
     isLiveViewActive = true;
     globalOnFrameCallback = onFrameCallback;
     const generation = ++liveViewGeneration;
