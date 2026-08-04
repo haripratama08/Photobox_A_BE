@@ -24,7 +24,9 @@ const runGphoto = (args, options, callback) => {
  * Menggunakan command CLI gphoto2 / v4l2 agar super enteng, cepat, dan hemat resource RAM/CPU di Linux.
  */
 async function getStatus() {
-    if (isCameraBusy || isCapturingFrame) {
+    // Jangan menjalankan `gphoto2 --summary` ketika LiveView sedang aktif.
+    // Perintah status bersamaan dengan capture-preview sering memicu PTP General Error.
+    if (isCameraBusy || isCapturingFrame || isLiveViewActive) {
         return {
             connected: cameraConnected,
             model: cameraConnected
@@ -34,7 +36,7 @@ async function getStatus() {
     }
 
     return new Promise((resolve) => {
-        runGphoto(['--summary'], { timeout: 5000 }, (error, stdout) => {
+        runGphoto(['--summary'], { timeout: 8000 }, (error, stdout) => {
             if (!error && stdout && !stdout.toLowerCase().includes('error')) {
                 cameraConnected = true;
                 return resolve({
@@ -237,30 +239,22 @@ function startLiveView(onFrameCallback) {
     console.log(`📹 [LINUX CAMERA] Memulai streaming LiveView...`);
 
     isCapturingFrame = false;
-    // Aktifkan mode LiveView Canon sebelum meminta preview berulang.
-    runGphoto(['--set-config', 'viewfinder=1'], { timeout: 5000 }, (err) => {
-        if (err) {
-            console.log(`⚠️ [LINUX CAMERA] Gagal mengaktifkan viewfinder: ${err.message}`);
+    // Jangan memaksa set-config viewfinder. Pada sebagian Canon, perintah ini
+    // berbenturan dengan capture-preview dan menyebabkan PTP General Error.
+    // capture-preview akan mengaktifkan LiveView secara otomatis.
+    setTimeout(() => {
+        if (isLiveViewActive && generation === liveViewGeneration) {
+            captureNextFrame(onFrameCallback);
         }
-        if (!isLiveViewActive || generation !== liveViewGeneration) return;
-        // Beri waktu sensor dan mekanik kamera untuk stabil.
-        setTimeout(() => {
-            if (isLiveViewActive && generation === liveViewGeneration) {
-                captureNextFrame(onFrameCallback);
-            }
-        }, 1500);
-    });
+    }, 1800);
 }
 
 function stopLiveView() {
     isLiveViewActive = false;
     liveViewGeneration += 1;
     console.log(`⏹️ [LINUX CAMERA] LiveView dihentikan.`);
-    runGphoto(['--set-config', 'viewfinder=0'], { timeout: 5000 }, (err) => {
-        if (err) {
-            console.log(`⚠️ [LINUX CAMERA] Gagal menonaktifkan viewfinder: ${err.message}`);
-        }
-    });
+    // Tidak perlu mengirim viewfinder=0; menutup proses capture-preview sudah
+    // cukup dan menghindari perintah PTP tambahan saat kamera sedang sibuk.
 }
 
 /**
