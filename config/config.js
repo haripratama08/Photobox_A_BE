@@ -48,7 +48,13 @@ module.exports = {
     CAMERA_PORT: process.env.CAMERA_PORT || '',
     REQUIRE_CAMERA_PORT: process.env.REQUIRE_CAMERA_PORT !== 'false',
     REQUIRE_PRINTER: process.env.REQUIRE_PRINTER !== 'false',
-    VIDEO_DEVICE: process.env.VIDEO_DEVICE || '/dev/video0',
+    // Kosong berarti tidak memakai V4L2/HDMI capture. Ini wajib untuk
+    // kamera DSLR yang terhubung langsung lewat satu kabel USB (gphoto2).
+    // Jangan memakai fallback /dev/video0 karena dapat memilih webcam atau
+    // device lain dan membuat LiveView tidak pernah menerima frame kamera.
+    VIDEO_DEVICE: process.env.VIDEO_DEVICE === undefined
+        ? ''
+        : process.env.VIDEO_DEVICE.trim(),
     PREVIEW_FILE: process.env.PREVIEW_FILE || `/tmp/photobox-${boxSlug}-preview.jpg`,
     DASHBOARD_URL: process.env.DASHBOARD_URL || 'http://127.0.0.1:4000',
     DASHBOARD_AGENT_TOKEN: process.env.DASHBOARD_AGENT_TOKEN || '',
