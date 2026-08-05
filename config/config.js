@@ -48,6 +48,11 @@ module.exports = {
     CAMERA_PORT: process.env.CAMERA_PORT || '',
     REQUIRE_CAMERA_PORT: process.env.REQUIRE_CAMERA_PORT !== 'false',
     REQUIRE_PRINTER: process.env.REQUIRE_PRINTER !== 'false',
+    CAMERA_AGENT_ENABLED: process.env.CAMERA_AGENT_ENABLED !== 'false',
+    CAMERA_AGENT_BIN: resolveApiPath(
+        process.env.CAMERA_AGENT_BIN,
+        'native/photobox-camera-agent'
+    ),
     // Kosong berarti tidak memakai V4L2/HDMI capture. Ini wajib untuk
     // kamera DSLR yang terhubung langsung lewat satu kabel USB (gphoto2).
     // Jangan memakai fallback /dev/video0 karena dapat memilih webcam atau
@@ -61,6 +66,10 @@ module.exports = {
     HEARTBEAT_INTERVAL_MS: Number(process.env.HEARTBEAT_INTERVAL_MS || 10000),
     LIVEVIEW_FALLBACK_FPS: Number(process.env.LIVEVIEW_FALLBACK_FPS || 4),
     LIVEVIEW_MODE: process.env.LIVEVIEW_MODE === 'movie' ? 'movie' : 'preview',
+    LIVEVIEW_FRAME_TIMEOUT_MS: Number(process.env.LIVEVIEW_FRAME_TIMEOUT_MS || 7000),
+    CAMERA_RESET_COOLDOWN_MS: Number(process.env.CAMERA_RESET_COOLDOWN_MS || 20000),
+    CAMERA_RESET_SETTLE_MS: Number(process.env.CAMERA_RESET_SETTLE_MS || 3000),
+    CAPTURE_DEBOUNCE_MS: Number(process.env.CAPTURE_DEBOUNCE_MS || 2000),
     LIVEVIEW_BALANCE_INTERVAL_MS: Number(process.env.LIVEVIEW_BALANCE_INTERVAL_MS || 2000),
     ENABLE_WHATSAPP: process.env.ENABLE_WHATSAPP !== 'false',
     FONNTE_TOKEN: process.env.FONNTE_TOKEN || '',

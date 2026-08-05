@@ -2,6 +2,7 @@ const { execFile, spawn } = require('child_process');
 const fs = require('fs-extra');
 const path = require('path');
 const config = require('../config/config');
+const nativeCameraAgent = require('./nativeCameraAgent');
 
 let isLiveViewActive = false;
 let cameraConnected = false;
@@ -45,6 +46,62 @@ const releaseDesktopCameraClaim = async () => {
     })));
 };
 
+const isPtpSessionError = (value) => /ptp general|unspecified error|galat \(-1|i\/o error|no camera found|tak ada kamera|could not claim|device or resource busy|ptp device busy/i
+    .test(String(value || ''));
+
+let cameraRecoveryPromise = null;
+let lastCameraResetAt = 0;
+
+const detectCamera = () => new Promise((resolve) => {
+    // Nomor bus dapat berubah setelah USB reset, jadi jangan gunakan CAMERA_PORT.
+    execFile('gphoto2', ['--auto-detect'], { timeout: 5000 }, (error, stdout) => {
+        resolve(!error && /Canon|EOS/i.test(stdout || ''));
+    });
+});
+
+const resetCameraUsb = async (reason) => {
+    if (process.platform === 'win32') return false;
+    if (cameraRecoveryPromise) return cameraRecoveryPromise;
+
+    const elapsed = Date.now() - lastCameraResetAt;
+    if (elapsed < config.CAMERA_RESET_COOLDOWN_MS) {
+        await delay(Math.min(2000, config.CAMERA_RESET_COOLDOWN_MS - elapsed));
+        return false;
+    }
+
+    lastCameraResetAt = Date.now();
+    cameraRecoveryPromise = (async () => {
+        console.log(`🔄 [LINUX CAMERA] Pemulihan USB otomatis: ${reason}`);
+        await nativeCameraAgent.stop();
+        await releaseDesktopCameraClaim();
+
+        // USB reset dari libgphoto2 menggantikan cabut-pasang pada sisi host.
+        // Exit code diabaikan karena perangkat dapat hilang sesaat saat reset sukses.
+        await new Promise((resolve) => {
+            execFile('gphoto2', ['--reset'], { timeout: 10000 }, () => resolve());
+        });
+        await delay(config.CAMERA_RESET_SETTLE_MS);
+
+        for (let attempt = 1; attempt <= 6; attempt += 1) {
+            await releaseDesktopCameraClaim();
+            if (await detectCamera()) {
+                cameraConnected = true;
+                console.log('✅ [LINUX CAMERA] Kamera pulih tanpa cabut kabel.');
+                return true;
+            }
+            await delay(1500);
+        }
+
+        cameraConnected = false;
+        console.log('⚠️ [LINUX CAMERA] Kamera belum muncul; pemantauan otomatis tetap berjalan.');
+        return false;
+    })().finally(() => {
+        cameraRecoveryPromise = null;
+    });
+
+    return cameraRecoveryPromise;
+};
+
 /**
  * Layanan Kamera Linux Natif (Tanpa DigiCamControl)
  * Menggunakan command CLI gphoto2 / v4l2 agar super enteng, cepat, dan hemat resource RAM/CPU di Linux.
@@ -59,6 +116,24 @@ async function getStatus() {
                 ? `🟢 Kamera ${config.BOX_ID} sedang digunakan`
                 : `🔴 Kamera ${config.BOX_ID} tidak terdeteksi`
         };
+    }
+
+    if (nativeCameraAgent.available) {
+        try {
+            await releaseDesktopCameraClaim();
+            await nativeCameraAgent.ping();
+            cameraConnected = true;
+            return {
+                connected: true,
+                model: `🟢 Kamera ${config.BOX_ID} terhubung melalui Camera Agent`
+            };
+        } catch (error) {
+            cameraConnected = false;
+            return {
+                connected: false,
+                model: `🔴 Camera Agent belum dapat membuka ${config.BOX_ID}`
+            };
+        }
     }
 
     return new Promise((resolve) => {
@@ -103,6 +178,7 @@ let latestLiveViewFrame = null;
 let lastFrameEmittedAt = 0;
 let liveViewMode = config.LIVEVIEW_MODE;
 let liveViewUsesShell = false;
+let lastCaptureRequestAt = 0;
 
 const MAX_LIVEVIEW_BUFFER_BYTES = 8 * 1024 * 1024;
 
@@ -165,6 +241,13 @@ const stopLiveViewTransport = () => {
  * Saat foto disimpan ke folder utama, watcher.js akan mendeteksi dan mengompresnya secara otomatis.
  */
 async function capturePhoto(targetFolder) {
+    const now = Date.now();
+    if (now - lastCaptureRequestAt < config.CAPTURE_DEBOUNCE_MS) {
+        console.log('⚠️ [LINUX CAMERA] Permintaan foto ganda diabaikan.');
+        return null;
+    }
+    lastCaptureRequestAt = now;
+
     if (captureInProgress || isCameraBusy) {
         console.log('⚠️ [LINUX CAMERA] Permintaan foto diabaikan: kamera masih sibuk.');
         return null;
@@ -181,6 +264,28 @@ async function capturePhoto(targetFolder) {
 
     try {
         await stopLiveViewTransport();
+
+        if (nativeCameraAgent.available) {
+            console.log('📸 [CAMERA AGENT] Mengeksekusi pengambilan foto pada sesi persisten...');
+            try {
+                await nativeCameraAgent.capture(filePath);
+            } catch (error) {
+                try {
+                    if (fs.existsSync(filePath) && fs.statSync(filePath).size > 1024) {
+                        console.log(`✅ [CAMERA AGENT] Foto sudah tersimpan: ${filename}`);
+                        return filePath;
+                    }
+                } catch (_) {}
+
+                console.log(`❌ [CAMERA AGENT] Pengambilan foto gagal: ${error.message}`);
+                await resetCameraUsb('Camera Agent gagal mengambil foto');
+                return null;
+            }
+
+            console.log(`✅ [CAMERA AGENT] Sukses jepret & unduh foto: ${filename}`);
+            return filePath;
+        }
+
         await releaseDesktopCameraClaim();
         await delay(900);
 
@@ -198,12 +303,32 @@ async function capturePhoto(targetFolder) {
                 break;
             } catch (error) {
                 captureError = error;
-                const cameraClaimed = /could not claim|device or resource busy|ptp device busy/i
-                    .test(`${error.message}\n${error.stderr || ''}`);
-                if (!cameraClaimed || attempt === 3) break;
+                try {
+                    // Beberapa Canon mengembalikan galat setelah file sebenarnya
+                    // sudah selesai diunduh. Anggap sukses agar shutter tidak dipicu lagi.
+                    if (fs.existsSync(filePath) && fs.statSync(filePath).size > 1024) {
+                        captureError = null;
+                        break;
+                    }
+                } catch (_) {}
+
+                const errorText = `${error.message}\n${error.stderr || ''}`;
+                const cameraClaimed = /could not claim|device or resource busy|ptp device busy|no camera found|tak ada kamera/i
+                    .test(errorText);
+                if (!cameraClaimed || attempt === 3) {
+                    // PTP General/Unspecified bisa muncul sesudah shutter bekerja.
+                    // Jangan retry karena dapat menghasilkan jepretan ganda.
+                    if (isPtpSessionError(errorText)) {
+                        await resetCameraUsb('sesi PTP gagal saat mengambil foto');
+                    }
+                    break;
+                }
 
                 console.log(`⏳ [LINUX CAMERA] USB masih dipakai proses lain; retry ${attempt}/3...`);
                 await releaseDesktopCameraClaim();
+                if (attempt >= 2) {
+                    await resetCameraUsb('USB tetap sibuk sebelum shutter');
+                }
                 await delay(1000 * attempt);
             }
         }
@@ -232,6 +357,37 @@ async function runCameraControl(args, fallbackArgs = null) {
     isCameraBusy = true;
     const shouldResumeLiveView = isLiveViewActive;
     await stopLiveViewTransport();
+
+    if (nativeCameraAgent.available) {
+        const applyArgs = async (selectedArgs) => {
+            const assignment = selectedArgs?.[1] || '';
+            const separator = assignment.indexOf('=');
+            if (selectedArgs?.[0] !== '--set-config' || separator <= 0) {
+                throw new Error('Perintah Camera Agent tidak didukung.');
+            }
+            return nativeCameraAgent.setConfig(
+                assignment.slice(0, separator),
+                assignment.slice(separator + 1)
+            );
+        };
+
+        try {
+            await applyArgs(args);
+        } catch (error) {
+            if (fallbackArgs) {
+                try {
+                    await applyArgs(fallbackArgs);
+                } catch (_) {}
+            }
+        } finally {
+            isCameraBusy = false;
+            if (shouldResumeLiveView && isLiveViewActive && globalOnFrameCallback) {
+                scheduleLiveViewStart(500, liveViewGeneration);
+            }
+        }
+        return;
+    }
+
     await releaseDesktopCameraClaim();
     await delay(600);
 
@@ -380,13 +536,19 @@ function startGphotoPreviewShell(onFrameCallback, generation) {
     let requestTimer = null;
     let requestWatchdog = null;
     let filePollTimer = null;
-    let consecutiveFailures = 0;
+    let sessionFailed = false;
+    let sessionFailureReason = '';
+    let failureStopTimer = null;
     const previewFile = config.PREVIEW_FILE;
     const thumbFile = path.join(
         path.dirname(previewFile),
         `thumb_${path.basename(previewFile)}`
     );
     const shellDefaultPreviewFile = path.join(path.dirname(previewFile), 'capture_preview.jpg');
+    const shellDefaultThumbPreviewFile = path.join(
+        path.dirname(previewFile),
+        'thumb_capture_preview.jpg'
+    );
 
     const child = spawn(
         'gphoto2',
@@ -403,6 +565,22 @@ function startGphotoPreviewShell(onFrameCallback, generation) {
     liveViewProcess = child;
     liveViewUsesShell = true;
 
+    const failSession = (reason) => {
+        if (sessionFailed || child.exitCode !== null) return;
+        sessionFailed = true;
+        sessionFailureReason = reason;
+        if (requestTimer) clearTimeout(requestTimer);
+        if (requestWatchdog) clearTimeout(requestWatchdog);
+        if (filePollTimer) clearTimeout(filePollTimer);
+
+        // Tutup shell secara normal agar libgphoto2 sempat mengakhiri sesi PTP.
+        if (child.stdin.writable) child.stdin.write('exit\n');
+        failureStopTimer = setTimeout(() => {
+            if (child.exitCode === null) child.kill('SIGTERM');
+        }, 1500);
+        failureStopTimer.unref?.();
+    };
+
     const requestFrame = () => {
         if (!isLiveViewActive || isCameraBusy || generation !== liveViewGeneration) return;
         if (liveViewProcess !== child || child.exitCode !== null || !child.stdin.writable) return;
@@ -411,13 +589,19 @@ function startGphotoPreviewShell(onFrameCallback, generation) {
             fs.removeSync(previewFile);
             fs.removeSync(thumbFile);
             fs.removeSync(shellDefaultPreviewFile);
+            fs.removeSync(shellDefaultThumbPreviewFile);
         } catch (_) {}
 
         child.stdin.write('capture-preview\n');
         if (requestWatchdog) clearTimeout(requestWatchdog);
         const pollForFrame = () => {
             if (!isLiveViewActive || isCameraBusy || generation !== liveViewGeneration) return;
-            const framePath = [thumbFile, previewFile, shellDefaultPreviewFile]
+            const framePath = [
+                thumbFile,
+                previewFile,
+                shellDefaultThumbPreviewFile,
+                shellDefaultPreviewFile
+            ]
                 .find(candidate => fs.existsSync(candidate)) || null;
 
             if (framePath) {
@@ -426,7 +610,6 @@ function startGphotoPreviewShell(onFrameCallback, generation) {
                     if (frame.length > 100) {
                         latestLiveViewFrame = frame;
                         cameraConnected = true;
-                        consecutiveFailures = 0;
                         liveViewRestartAttempt = 0;
                         if (requestWatchdog) clearTimeout(requestWatchdog);
                         onFrameCallback(frame.toString('base64'));
@@ -445,21 +628,22 @@ function startGphotoPreviewShell(onFrameCallback, generation) {
 
         requestWatchdog = setTimeout(() => {
             if (filePollTimer) clearTimeout(filePollTimer);
-            consecutiveFailures += 1;
-            if (child.exitCode === null) {
-                console.log('⚠️ [LINUX CAMERA] Sesi preview tidak merespons; memulai ulang koneksi kamera.');
-                child.kill('SIGINT');
-            }
-        }, 10000);
+            console.log('⚠️ [LINUX CAMERA] Preview macet; menjalankan pemulihan otomatis.');
+            failSession('preview tidak menghasilkan frame');
+        }, config.LIVEVIEW_FRAME_TIMEOUT_MS);
         requestWatchdog.unref?.();
     };
 
     child.stdout.on('data', (data) => {
-        stdoutText = `${stdoutText}${data.toString()}`.slice(-4000);
+        const text = data.toString();
+        stdoutText = `${stdoutText}${text}`.slice(-4000);
+        if (isPtpSessionError(text)) failSession(text.trim());
     });
 
     child.stderr.on('data', (data) => {
-        stderrText = `${stderrText}${data.toString()}`.slice(-4000);
+        const text = data.toString();
+        stderrText = `${stderrText}${text}`.slice(-4000);
+        if (isPtpSessionError(text)) failSession(text.trim());
     });
 
     child.on('error', (error) => {
@@ -470,6 +654,7 @@ function startGphotoPreviewShell(onFrameCallback, generation) {
         if (requestTimer) clearTimeout(requestTimer);
         if (requestWatchdog) clearTimeout(requestWatchdog);
         if (filePollTimer) clearTimeout(filePollTimer);
+        if (failureStopTimer) clearTimeout(failureStopTimer);
         if (liveViewProcess === child) liveViewProcess = null;
         isCapturingFrame = false;
         liveViewUsesShell = false;
@@ -480,17 +665,71 @@ function startGphotoPreviewShell(onFrameCallback, generation) {
         const reason = `${stderrText}\n${stdoutText}`.trim().split(/\r?\n/).slice(-2).join(' ')
             || `exit=${code || signal}`;
         console.log(`⚠️ [LINUX CAMERA] Sesi preview berhenti: ${reason}`);
+
+        if (sessionFailed || isPtpSessionError(reason)) {
+            resetCameraUsb(sessionFailureReason || reason)
+                .then((recovered) => {
+                    if (!isLiveViewActive || isCameraBusy || generation !== liveViewGeneration) return;
+                    scheduleLiveViewStart(recovered ? 1200 : 15000, generation);
+                })
+                .catch(() => {
+                    if (!isLiveViewActive || isCameraBusy || generation !== liveViewGeneration) return;
+                    scheduleLiveViewStart(15000, generation);
+                });
+            return;
+        }
+
         scheduleLiveViewStart(retryDelay, generation);
     });
 
-    // Shell mempertahankan satu Camera object/libgphoto2 session. Mirror tidak
-    // lagi turun-naik untuk setiap frame seperti pada satu proses per preview.
+    // Shell mempertahankan satu Camera object/libgphoto2 session. capture-preview
+    // mengaktifkan EVF sendiri; perubahan capturetarget/viewfinder justru dapat
+    // membuat sesi PTP EOS 700D ini macet.
     setTimeout(() => {
         if (liveViewProcess !== child || !child.stdin.writable) return;
-        child.stdin.write('set-config viewfinder=1\n');
-        requestTimer = setTimeout(requestFrame, 1800);
+        requestTimer = setTimeout(requestFrame, 300);
         requestTimer.unref?.();
     }, 300);
+}
+
+async function captureNativeAgentFrame(onFrameCallback, generation) {
+    if (!isLiveViewActive || isCameraBusy || generation !== liveViewGeneration) return;
+    if (isCapturingFrame) return;
+
+    isCapturingFrame = true;
+    const cycleStartedAt = Date.now();
+    const previewFile = config.PREVIEW_FILE;
+    let recoveryDelay = null;
+    try {
+        fs.ensureDirSync(path.dirname(previewFile));
+        fs.removeSync(previewFile);
+        await nativeCameraAgent.preview(previewFile);
+        const frame = fs.readFileSync(previewFile);
+        if (frame.length <= 100) throw new Error('Frame preview kosong.');
+
+        latestLiveViewFrame = frame;
+        cameraConnected = true;
+        liveViewRestartAttempt = 0;
+        if (isLiveViewActive && !isCameraBusy && generation === liveViewGeneration) {
+            onFrameCallback(frame.toString('base64'));
+        }
+    } catch (error) {
+        cameraConnected = false;
+        console.log(`⚠️ [CAMERA AGENT] Preview gagal: ${error.message}`);
+        const recovered = await resetCameraUsb(`Camera Agent preview gagal: ${error.message}`);
+        recoveryDelay = recovered ? 1200 : 15000;
+    } finally {
+        isCapturingFrame = false;
+    }
+
+    if (!isLiveViewActive || isCameraBusy || generation !== liveViewGeneration) return;
+    if (recoveryDelay !== null) {
+        scheduleLiveViewStart(recoveryDelay, generation);
+        return;
+    }
+    const frameDelay = Math.max(250, Math.round(1000 / targetLiveViewFps));
+    const elapsed = Date.now() - cycleStartedAt;
+    scheduleLiveViewStart(Math.max(0, frameDelay - elapsed), generation);
 }
 
 function captureV4l2Frame(onFrameCallback, generation) {
@@ -524,6 +763,10 @@ function scheduleLiveViewStart(delayMs, generation = liveViewGeneration) {
 
         if (config.VIDEO_DEVICE && fs.existsSync(config.VIDEO_DEVICE)) {
             captureV4l2Frame(globalOnFrameCallback, generation);
+            return;
+        }
+        if (nativeCameraAgent.available) {
+            captureNativeAgentFrame(globalOnFrameCallback, generation).catch(() => {});
             return;
         }
         releaseDesktopCameraClaim()
@@ -592,6 +835,7 @@ async function shutdown() {
     isLiveViewActive = false;
     liveViewGeneration += 1;
     await stopLiveViewTransport();
+    await nativeCameraAgent.stop();
 }
 
 /**
@@ -599,8 +843,9 @@ async function shutdown() {
  * Digunakan untuk Web Browser Live Preview (http://localhost:3000/preview)
  */
 function getSinglePreviewFrame(res) {
-    // Endpoint browser memakai frame terakhir dari stream yang sama. Jangan
-    // membuka proses gphoto2 kedua saat LiveView aktif karena PTP bersifat eksklusif.
+    // Endpoint browser hanya memakai frame dari sesi bersama. Jangan pernah
+    // membuka proses gphoto2 per HTTP request karena halaman memanggil endpoint
+    // ini tiap 300 ms dan Canon hanya mengizinkan satu sesi PTP.
     if (latestLiveViewFrame && isLiveViewActive) {
         res.writeHead(200, {
             'Content-Type': 'image/jpeg',
@@ -608,53 +853,11 @@ function getSinglePreviewFrame(res) {
         });
         return res.end(latestLiveViewFrame);
     }
-    if (isLiveViewActive || isCameraBusy || captureInProgress) {
-        return res.status(503).send('LiveView sedang menyiapkan frame.');
+
+    if (!isLiveViewActive && !isCameraBusy && !captureInProgress) {
+        startLiveView(() => {});
     }
-
-    const previewFile = config.PREVIEW_FILE;
-    const thumbFile = path.join(
-        path.dirname(previewFile),
-        `thumb_${path.basename(previewFile)}`
-    );
-
-    runGphoto([
-        '--capture-preview',
-        '--filename',
-        previewFile,
-        '--force-overwrite'
-    ], { timeout: 3000 }, (err) => {
-        let frameData = null;
-        try {
-            if (fs.existsSync(thumbFile)) frameData = fs.readFileSync(thumbFile);
-            else if (fs.existsSync(previewFile)) frameData = fs.readFileSync(previewFile);
-        } catch (e) {}
-
-        if (frameData && frameData.length > 100) {
-            res.writeHead(200, { 'Content-Type': 'image/jpeg', 'Cache-Control': 'no-cache, no-store, must-revalidate' });
-            res.end(frameData);
-        } else {
-            execFile('ffmpeg', [
-                '-y',
-                '-f',
-                'video4linux2',
-                '-i',
-                config.VIDEO_DEVICE,
-                '-vframes',
-                '1',
-                '-f',
-                'image2pipe',
-                '-'
-            ], { encoding: 'buffer', timeout: 3000, maxBuffer: 20 * 1024 * 1024 }, (errF, stdoutF) => {
-                if (!errF && stdoutF && stdoutF.length > 100) {
-                    res.writeHead(200, { 'Content-Type': 'image/jpeg', 'Cache-Control': 'no-cache, no-store, must-revalidate' });
-                    res.end(stdoutF);
-                } else {
-                    res.status(500).send('Kamera tidak terdeteksi atau mati.');
-                }
-            });
-        }
-    });
+    return res.status(503).send('LiveView sedang menyiapkan frame.');
 }
 
 module.exports = {

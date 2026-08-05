@@ -11,3 +11,4 @@ state/
 *.sqlite
 *.sqlite3
 *.log
+/native/photobox-camera-agent
