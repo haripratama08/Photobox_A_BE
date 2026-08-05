@@ -19,6 +19,32 @@ const runGphoto = (args, options, callback) => {
     execFile('gphoto2', cameraArgs(args), options, callback);
 };
 
+const delay = (milliseconds) => new Promise(resolve => setTimeout(resolve, milliseconds));
+
+const runGphotoPromise = (args, options = {}) => new Promise((resolve, reject) => {
+    runGphoto(args, options, (error, stdout, stderr) => {
+        if (error) {
+            error.stdout = stdout;
+            error.stderr = stderr;
+            return reject(error);
+        }
+        resolve({ stdout, stderr });
+    });
+});
+
+const releaseDesktopCameraClaim = async () => {
+    if (process.platform === 'win32') return;
+
+    // Desktop Linux sering memasang kamera otomatis melalui GVFS tepat setelah
+    // sesi gphoto2 ditutup. Hentikan hanya backend kamera GVFS milik user ini.
+    await Promise.all([
+        'gvfsd-gphoto2',
+        'gvfs-gphoto2-volume-monitor'
+    ].map((processName) => new Promise((resolve) => {
+        execFile('pkill', ['-f', processName], { timeout: 3000 }, () => resolve());
+    })));
+};
+
 /**
  * Layanan Kamera Linux Natif (Tanpa DigiCamControl)
  * Menggunakan command CLI gphoto2 / v4l2 agar super enteng, cepat, dan hemat resource RAM/CPU di Linux.
@@ -98,22 +124,31 @@ const stopLiveViewTransport = () => {
 
     return new Promise((resolve) => {
         let finished = false;
+        let terminateTimer = null;
         let forceStopTimer = null;
         const finish = () => {
             if (finished) return;
             finished = true;
+            if (terminateTimer) clearTimeout(terminateTimer);
             if (forceStopTimer) clearTimeout(forceStopTimer);
             isCapturingFrame = false;
             resolve();
         };
 
         child.once('close', finish);
-        child.kill('SIGTERM');
+        // gphoto2 mendokumentasikan Ctrl+C untuk mengakhiri capture-movie.
+        // SIGINT memberi driver kesempatan mengirim EndLiveView dan melepas USB.
+        child.kill('SIGINT');
+
+        terminateTimer = setTimeout(() => {
+            if (child.exitCode === null) child.kill('SIGTERM');
+        }, 3000);
+        terminateTimer.unref?.();
 
         forceStopTimer = setTimeout(() => {
             if (child.exitCode === null) child.kill('SIGKILL');
             finish();
-        }, 3000);
+        }, 5000);
         forceStopTimer.unref?.();
     });
 };
@@ -123,72 +158,65 @@ const stopLiveViewTransport = () => {
  * Saat foto disimpan ke folder utama, watcher.js akan mendeteksi dan mengompresnya secara otomatis.
  */
 async function capturePhoto(targetFolder) {
-    // Kunci harus dipasang sebelum await. Jika dipasang setelah waitForCamera(),
-    // dua request yang datang bersamaan bisa sama-sama lolos dan menjepret dua kali.
     if (captureInProgress || isCameraBusy) {
-        console.log(`⚠️ [LINUX CAMERA] Permintaan foto diabaikan: kamera masih memproses foto sebelumnya.`);
+        console.log('⚠️ [LINUX CAMERA] Permintaan foto diabaikan: kamera masih sibuk.');
         return null;
     }
     captureInProgress = true;
-
-    // Canon hanya menerima satu sesi PTP. Kunci jalur kamera, hentikan proses
-    // LiveView persisten, lalu tunggu sampai transport benar-benar bebas.
     const shouldResumeLiveView = isLiveViewActive;
     isCameraBusy = true;
-    await stopLiveViewTransport();
-    await new Promise(r => setTimeout(r, 500));
-    while (isCapturingFrame) {
-        await new Promise(r => setTimeout(r, 100));
-    }
-    
-    return new Promise((resolve) => {
-        fs.ensureDirSync(targetFolder);
-        const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
-        const filename = `photo_linux_${timestamp}.jpg`;
-        const filePath = path.join(targetFolder, filename);
 
-        console.log(`📸 [LINUX CAMERA] (LOCK AKTIF) Mengeksekusi pengambilan foto utama...`);
+    fs.ensureDirSync(targetFolder);
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+    const filename = `photo_linux_${timestamp}.jpg`;
+    const filePath = path.join(targetFolder, filename);
+    let captureError = null;
 
-        runGphoto([
+    try {
+        await stopLiveViewTransport();
+        await releaseDesktopCameraClaim();
+        await delay(900);
+
+        console.log('📸 [LINUX CAMERA] (LOCK AKTIF) Mengeksekusi pengambilan foto utama...');
+        const captureArgs = [
             '--capture-image-and-download',
-            '--filename',
-            filePath,
+            '--filename', filePath,
             '--force-overwrite'
-        ], { timeout: 30000 }, (error) => {
-            if (error) {
-                console.log(`❌ [LINUX CAMERA] Error saat menjepret:`, error.message);
-                execFile('ffmpeg', [
-                    '-y',
-                    '-f',
-                    'video4linux2',
-                    '-i',
-                    config.VIDEO_DEVICE,
-                    '-vframes',
-                    '1',
-                    filePath
-                ], { timeout: 15000 }, (errFfmpeg) => {
-                    if (errFfmpeg && !fs.existsSync(filePath)) {
-                        console.log(`⏳ Sistem siap menerima file foto di folder pemantauan (${targetFolder}) untuk diproses otomatis.`);
-                    }
-                });
-            } else {
-                console.log(`✅ [LINUX CAMERA] Sukses jepret & unduh foto: ${filename}`);
+        ];
+
+        for (let attempt = 1; attempt <= 3; attempt += 1) {
+            try {
+                await runGphotoPromise(captureArgs, { timeout: 30000 });
+                captureError = null;
+                break;
+            } catch (error) {
+                captureError = error;
+                const cameraClaimed = /could not claim|device or resource busy|ptp device busy/i
+                    .test(`${error.message}\n${error.stderr || ''}`);
+                if (!cameraClaimed || attempt === 3) break;
+
+                console.log(`⏳ [LINUX CAMERA] USB masih dipakai proses lain; retry ${attempt}/3...`);
+                await releaseDesktopCameraClaim();
+                await delay(1000 * attempt);
             }
-            
-            // 4. Buka Kunci USB
-            isCameraBusy = false;
-            
-            // 5. Kembalikan mode LiveView jika sebelumnya menyala
-            if (shouldResumeLiveView && isLiveViewActive && globalOnFrameCallback) {
-                console.log(`📸 [LINUX CAMERA] Melanjutkan LiveView kembali...`);
-                // Beri jeda agar mekanik kamera rileks sebelum masuk LiveView kembali.
-                scheduleLiveViewStart(1800, liveViewGeneration);
-            }
-            
-            captureInProgress = false;
-            resolve(filePath);
-        });
-    });
+        }
+
+        if (captureError) {
+            console.log('❌ [LINUX CAMERA] Error saat menjepret:', captureError.message);
+            return null;
+        }
+
+        console.log(`✅ [LINUX CAMERA] Sukses jepret & unduh foto: ${filename}`);
+        return filePath;
+    } finally {
+        isCameraBusy = false;
+        captureInProgress = false;
+
+        if (shouldResumeLiveView && isLiveViewActive && globalOnFrameCallback) {
+            console.log('📸 [LINUX CAMERA] Melanjutkan LiveView kembali...');
+            scheduleLiveViewStart(2000, liveViewGeneration);
+        }
+    }
 }
 
 async function runCameraControl(args, fallbackArgs = null) {
@@ -197,7 +225,8 @@ async function runCameraControl(args, fallbackArgs = null) {
     isCameraBusy = true;
     const shouldResumeLiveView = isLiveViewActive;
     await stopLiveViewTransport();
-    await new Promise(r => setTimeout(r, 400));
+    await releaseDesktopCameraClaim();
+    await delay(600);
 
     await new Promise((resolve) => {
         runGphoto(args, { timeout: 10000 }, (error) => {
@@ -353,7 +382,14 @@ function scheduleLiveViewStart(delayMs, generation = liveViewGeneration) {
             captureV4l2Frame(globalOnFrameCallback, generation);
             return;
         }
-        startGphotoMovieStream(globalOnFrameCallback, generation);
+        releaseDesktopCameraClaim()
+            .then(() => delay(300))
+            .then(() => {
+                if (isLiveViewActive && !isCameraBusy && generation === liveViewGeneration) {
+                    startGphotoMovieStream(globalOnFrameCallback, generation);
+                }
+            })
+            .catch(() => {});
     }, Math.max(0, delayMs));
     liveViewRestartTimer.unref?.();
 }
