@@ -376,14 +376,29 @@ function startGphotoPreviewShell(onFrameCallback, generation) {
     isCapturingFrame = true;
     liveViewFrameBuffer = Buffer.alloc(0);
     let stderrText = '';
+    let stdoutText = '';
     let requestTimer = null;
     let requestWatchdog = null;
+    let filePollTimer = null;
     let consecutiveFailures = 0;
+    const previewFile = config.PREVIEW_FILE;
+    const thumbFile = path.join(
+        path.dirname(previewFile),
+        `thumb_${path.basename(previewFile)}`
+    );
+    const shellDefaultPreviewFile = path.join(path.dirname(previewFile), 'capture_preview.jpg');
 
     const child = spawn(
         'gphoto2',
-        cameraArgs(['--stdout', '--force-overwrite', '--shell']),
-        { stdio: ['pipe', 'pipe', 'pipe'] }
+        cameraArgs([
+            '--filename', path.basename(previewFile),
+            '--force-overwrite',
+            '--shell'
+        ]),
+        {
+            cwd: path.dirname(previewFile),
+            stdio: ['pipe', 'pipe', 'pipe']
+        }
     );
     liveViewProcess = child;
     liveViewUsesShell = true;
@@ -392,31 +407,55 @@ function startGphotoPreviewShell(onFrameCallback, generation) {
         if (!isLiveViewActive || isCameraBusy || generation !== liveViewGeneration) return;
         if (liveViewProcess !== child || child.exitCode !== null || !child.stdin.writable) return;
 
+        try {
+            fs.removeSync(previewFile);
+            fs.removeSync(thumbFile);
+            fs.removeSync(shellDefaultPreviewFile);
+        } catch (_) {}
+
         child.stdin.write('capture-preview\n');
         if (requestWatchdog) clearTimeout(requestWatchdog);
-        requestWatchdog = setTimeout(() => {
-            consecutiveFailures += 1;
-            if (consecutiveFailures >= 3 && child.exitCode === null) {
-                console.log('⚠️ [LINUX CAMERA] Sesi preview tidak merespons; memulai ulang koneksi kamera.');
-                child.stdin.write('exit\n');
-                return;
+        const pollForFrame = () => {
+            if (!isLiveViewActive || isCameraBusy || generation !== liveViewGeneration) return;
+            const framePath = [thumbFile, previewFile, shellDefaultPreviewFile]
+                .find(candidate => fs.existsSync(candidate)) || null;
+
+            if (framePath) {
+                try {
+                    const frame = fs.readFileSync(framePath);
+                    if (frame.length > 100) {
+                        latestLiveViewFrame = frame;
+                        cameraConnected = true;
+                        consecutiveFailures = 0;
+                        liveViewRestartAttempt = 0;
+                        if (requestWatchdog) clearTimeout(requestWatchdog);
+                        onFrameCallback(frame.toString('base64'));
+                        const frameDelay = Math.max(500, Math.round(1000 / targetLiveViewFps));
+                        requestTimer = setTimeout(requestFrame, frameDelay);
+                        requestTimer.unref?.();
+                        return;
+                    }
+                } catch (_) {}
             }
-            requestTimer = setTimeout(requestFrame, 1500);
+            filePollTimer = setTimeout(pollForFrame, 100);
+            filePollTimer.unref?.();
+        };
+        filePollTimer = setTimeout(pollForFrame, 100);
+        filePollTimer.unref?.();
+
+        requestWatchdog = setTimeout(() => {
+            if (filePollTimer) clearTimeout(filePollTimer);
+            consecutiveFailures += 1;
+            if (child.exitCode === null) {
+                console.log('⚠️ [LINUX CAMERA] Sesi preview tidak merespons; memulai ulang koneksi kamera.');
+                child.kill('SIGINT');
+            }
         }, 10000);
         requestWatchdog.unref?.();
     };
 
     child.stdout.on('data', (data) => {
-        if (!isLiveViewActive || isCameraBusy || generation !== liveViewGeneration) return;
-        const emittedFrames = emitJpegFrames(data, onFrameCallback);
-        if (emittedFrames > 0) {
-            consecutiveFailures = 0;
-            liveViewRestartAttempt = 0;
-            if (requestWatchdog) clearTimeout(requestWatchdog);
-            const frameDelay = Math.max(500, Math.round(1000 / targetLiveViewFps));
-            requestTimer = setTimeout(requestFrame, frameDelay);
-            requestTimer.unref?.();
-        }
+        stdoutText = `${stdoutText}${data.toString()}`.slice(-4000);
     });
 
     child.stderr.on('data', (data) => {
@@ -430,6 +469,7 @@ function startGphotoPreviewShell(onFrameCallback, generation) {
     child.on('close', (code, signal) => {
         if (requestTimer) clearTimeout(requestTimer);
         if (requestWatchdog) clearTimeout(requestWatchdog);
+        if (filePollTimer) clearTimeout(filePollTimer);
         if (liveViewProcess === child) liveViewProcess = null;
         isCapturingFrame = false;
         liveViewUsesShell = false;
@@ -437,7 +477,7 @@ function startGphotoPreviewShell(onFrameCallback, generation) {
 
         liveViewRestartAttempt += 1;
         const retryDelay = Math.min(15000, 2000 * liveViewRestartAttempt);
-        const reason = stderrText.trim().split(/\r?\n/).slice(-2).join(' ')
+        const reason = `${stderrText}\n${stdoutText}`.trim().split(/\r?\n/).slice(-2).join(' ')
             || `exit=${code || signal}`;
         console.log(`⚠️ [LINUX CAMERA] Sesi preview berhenti: ${reason}`);
         scheduleLiveViewStart(retryDelay, generation);
