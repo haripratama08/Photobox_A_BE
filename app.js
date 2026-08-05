@@ -51,3 +51,17 @@ http.listen(config.PORT, config.HOST, () => {
     console.log(`================================================`);
     dashboardClient.startHeartbeat();
 });
+
+let shuttingDown = false;
+const shutdown = async () => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    await cameraService.shutdown();
+    http.close(() => process.exit(0));
+
+    const forceExitTimer = setTimeout(() => process.exit(0), 4000);
+    forceExitTimer.unref?.();
+};
+
+process.once('SIGINT', shutdown);
+process.once('SIGTERM', shutdown);
