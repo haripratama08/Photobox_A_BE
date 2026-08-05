@@ -102,6 +102,7 @@ let liveViewFrameBuffer = Buffer.alloc(0);
 let latestLiveViewFrame = null;
 let lastFrameEmittedAt = 0;
 let liveViewMode = config.LIVEVIEW_MODE;
+let liveViewUsesShell = false;
 
 const MAX_LIVEVIEW_BUFFER_BYTES = 8 * 1024 * 1024;
 
@@ -133,13 +134,18 @@ const stopLiveViewTransport = () => {
             if (terminateTimer) clearTimeout(terminateTimer);
             if (forceStopTimer) clearTimeout(forceStopTimer);
             isCapturingFrame = false;
+            liveViewUsesShell = false;
             resolve();
         };
 
         child.once('close', finish);
-        // gphoto2 mendokumentasikan Ctrl+C untuk mengakhiri capture-movie.
-        // SIGINT memberi driver kesempatan mengirim EndLiveView dan melepas USB.
-        child.kill('SIGINT');
+        if (liveViewUsesShell && child.stdin?.writable) {
+            child.stdin.write('exit\n');
+        } else {
+            // gphoto2 mendokumentasikan Ctrl+C untuk mengakhiri capture-movie.
+            // SIGINT memberi driver kesempatan mengirim EndLiveView dan melepas USB.
+            child.kill('SIGINT');
+        }
 
         terminateTimer = setTimeout(() => {
             if (child.exitCode === null) child.kill('SIGTERM');
@@ -266,6 +272,7 @@ function setShutter(val) {
 
 function emitJpegFrames(data, onFrameCallback) {
     liveViewFrameBuffer = Buffer.concat([liveViewFrameBuffer, data]);
+    let emittedFrames = 0;
 
     while (liveViewFrameBuffer.length > 0) {
         const start = liveViewFrameBuffer.indexOf(Buffer.from([0xff, 0xd8]));
@@ -273,7 +280,7 @@ function emitJpegFrames(data, onFrameCallback) {
             liveViewFrameBuffer = liveViewFrameBuffer.subarray(
                 Math.max(0, liveViewFrameBuffer.length - 1)
             );
-            return;
+            return emittedFrames;
         }
 
         const end = liveViewFrameBuffer.indexOf(Buffer.from([0xff, 0xd9]), start + 2);
@@ -282,7 +289,7 @@ function emitJpegFrames(data, onFrameCallback) {
             if (liveViewFrameBuffer.length > MAX_LIVEVIEW_BUFFER_BYTES) {
                 liveViewFrameBuffer = Buffer.alloc(0);
             }
-            return;
+            return emittedFrames;
         }
 
         const frame = Buffer.from(liveViewFrameBuffer.subarray(start, end + 2));
@@ -295,8 +302,10 @@ function emitJpegFrames(data, onFrameCallback) {
         if (Date.now() - lastFrameEmittedAt >= minimumFrameInterval) {
             lastFrameEmittedAt = Date.now();
             onFrameCallback(frame.toString('base64'));
+            emittedFrames += 1;
         }
     }
+    return emittedFrames;
 }
 
 function startGphotoMovieStream(onFrameCallback, generation) {
@@ -360,55 +369,88 @@ function startGphotoMovieStream(onFrameCallback, generation) {
     });
 }
 
-function captureGphotoPreviewFrame(onFrameCallback, generation) {
+function startGphotoPreviewShell(onFrameCallback, generation) {
     if (!isLiveViewActive || isCameraBusy || generation !== liveViewGeneration) return;
     if (liveViewProcess && liveViewProcess.exitCode === null) return;
 
     isCapturingFrame = true;
     liveViewFrameBuffer = Buffer.alloc(0);
-    const cycleStartedAt = Date.now();
-    const child = execFile(
+    let stderrText = '';
+    let requestTimer = null;
+    let requestWatchdog = null;
+    let consecutiveFailures = 0;
+
+    const child = spawn(
         'gphoto2',
-        cameraArgs([
-            '--set-config', 'viewfinder=1',
-            '--capture-preview',
-            '--stdout'
-        ]),
-        {
-            encoding: 'buffer',
-            timeout: 15000,
-            maxBuffer: MAX_LIVEVIEW_BUFFER_BYTES
-        },
-        (error, stdout, stderr) => {
-            if (liveViewProcess === child) liveViewProcess = null;
-            isCapturingFrame = false;
-
-            const output = Buffer.isBuffer(stdout) ? stdout : Buffer.from(stdout || '');
-            const hasJpeg = output.indexOf(Buffer.from([0xff, 0xd8])) >= 0;
-            if (hasJpeg && isLiveViewActive && !isCameraBusy && generation === liveViewGeneration) {
-                emitJpegFrames(output, onFrameCallback);
-                liveViewRestartAttempt = 0;
-            } else if (error && isLiveViewActive && !isCameraBusy) {
-                liveViewRestartAttempt += 1;
-                const errorText = Buffer.isBuffer(stderr) ? stderr.toString() : `${stderr || error.message}`;
-                const retryDelay = Math.min(15000, 1500 * liveViewRestartAttempt);
-                console.log(`⚠️ [LINUX CAMERA] Preview gagal: ${errorText.trim().split(/\r?\n/).slice(-2).join(' ')}`);
-                scheduleLiveViewStart(retryDelay, generation);
-                return;
-            }
-
-            if (isLiveViewActive && !isCameraBusy && generation === liveViewGeneration) {
-                // Membuka sesi CLI untuk setiap frame dibatasi maksimal 2 FPS
-                // agar Canon sempat menutup sesi PTP dengan bersih.
-                const frameDelay = Math.max(500, Math.round(1000 / targetLiveViewFps));
-                scheduleLiveViewStart(
-                    Math.max(0, frameDelay - (Date.now() - cycleStartedAt)),
-                    generation
-                );
-            }
-        }
+        cameraArgs(['--stdout', '--force-overwrite', '--shell']),
+        { stdio: ['pipe', 'pipe', 'pipe'] }
     );
     liveViewProcess = child;
+    liveViewUsesShell = true;
+
+    const requestFrame = () => {
+        if (!isLiveViewActive || isCameraBusy || generation !== liveViewGeneration) return;
+        if (liveViewProcess !== child || child.exitCode !== null || !child.stdin.writable) return;
+
+        child.stdin.write('capture-preview\n');
+        if (requestWatchdog) clearTimeout(requestWatchdog);
+        requestWatchdog = setTimeout(() => {
+            consecutiveFailures += 1;
+            if (consecutiveFailures >= 3 && child.exitCode === null) {
+                console.log('⚠️ [LINUX CAMERA] Sesi preview tidak merespons; memulai ulang koneksi kamera.');
+                child.stdin.write('exit\n');
+                return;
+            }
+            requestTimer = setTimeout(requestFrame, 1500);
+        }, 10000);
+        requestWatchdog.unref?.();
+    };
+
+    child.stdout.on('data', (data) => {
+        if (!isLiveViewActive || isCameraBusy || generation !== liveViewGeneration) return;
+        const emittedFrames = emitJpegFrames(data, onFrameCallback);
+        if (emittedFrames > 0) {
+            consecutiveFailures = 0;
+            liveViewRestartAttempt = 0;
+            if (requestWatchdog) clearTimeout(requestWatchdog);
+            const frameDelay = Math.max(500, Math.round(1000 / targetLiveViewFps));
+            requestTimer = setTimeout(requestFrame, frameDelay);
+            requestTimer.unref?.();
+        }
+    });
+
+    child.stderr.on('data', (data) => {
+        stderrText = `${stderrText}${data.toString()}`.slice(-4000);
+    });
+
+    child.on('error', (error) => {
+        stderrText = error.message;
+    });
+
+    child.on('close', (code, signal) => {
+        if (requestTimer) clearTimeout(requestTimer);
+        if (requestWatchdog) clearTimeout(requestWatchdog);
+        if (liveViewProcess === child) liveViewProcess = null;
+        isCapturingFrame = false;
+        liveViewUsesShell = false;
+        if (!isLiveViewActive || isCameraBusy || generation !== liveViewGeneration) return;
+
+        liveViewRestartAttempt += 1;
+        const retryDelay = Math.min(15000, 2000 * liveViewRestartAttempt);
+        const reason = stderrText.trim().split(/\r?\n/).slice(-2).join(' ')
+            || `exit=${code || signal}`;
+        console.log(`⚠️ [LINUX CAMERA] Sesi preview berhenti: ${reason}`);
+        scheduleLiveViewStart(retryDelay, generation);
+    });
+
+    // Shell mempertahankan satu Camera object/libgphoto2 session. Mirror tidak
+    // lagi turun-naik untuk setiap frame seperti pada satu proses per preview.
+    setTimeout(() => {
+        if (liveViewProcess !== child || !child.stdin.writable) return;
+        child.stdin.write('set-config viewfinder=1\n');
+        requestTimer = setTimeout(requestFrame, 1800);
+        requestTimer.unref?.();
+    }, 300);
 }
 
 function captureV4l2Frame(onFrameCallback, generation) {
@@ -449,7 +491,7 @@ function scheduleLiveViewStart(delayMs, generation = liveViewGeneration) {
             .then(() => {
                 if (isLiveViewActive && !isCameraBusy && generation === liveViewGeneration) {
                     if (liveViewMode === 'preview') {
-                        captureGphotoPreviewFrame(globalOnFrameCallback, generation);
+                        startGphotoPreviewShell(globalOnFrameCallback, generation);
                     } else {
                         startGphotoMovieStream(globalOnFrameCallback, generation);
                     }
