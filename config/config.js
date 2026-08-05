@@ -65,6 +65,7 @@ module.exports = {
     DASHBOARD_AGENT_TOKEN: process.env.DASHBOARD_AGENT_TOKEN || '',
     HEARTBEAT_INTERVAL_MS: Number(process.env.HEARTBEAT_INTERVAL_MS || 10000),
     LIVEVIEW_FALLBACK_FPS: Number(process.env.LIVEVIEW_FALLBACK_FPS || 4),
+    LIVEVIEW_TARGET_FPS: Number(process.env.LIVEVIEW_TARGET_FPS || 30),
     LIVEVIEW_MODE: process.env.LIVEVIEW_MODE === 'movie' ? 'movie' : 'preview',
     LIVEVIEW_FRAME_TIMEOUT_MS: Number(process.env.LIVEVIEW_FRAME_TIMEOUT_MS || 7000),
     CAMERA_RESET_COOLDOWN_MS: Number(process.env.CAMERA_RESET_COOLDOWN_MS || 20000),

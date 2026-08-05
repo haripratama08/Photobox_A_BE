@@ -8,7 +8,7 @@ let isLiveViewActive = false;
 let cameraConnected = false;
 let currentIso = "Auto";
 let currentShutter = "Auto";
-let targetLiveViewFps = Math.max(1, Math.min(30, config.LIVEVIEW_FALLBACK_FPS));
+let targetLiveViewFps = Math.max(1, Math.min(30, config.LIVEVIEW_TARGET_FPS));
 let liveViewGeneration = 0;
 
 const cameraArgs = (args) => {
@@ -118,7 +118,14 @@ async function getStatus() {
         };
     }
 
-    if (nativeCameraAgent.available) {
+    if (nativeCameraAgent.enabled) {
+        if (!nativeCameraAgent.available) {
+            cameraConnected = false;
+            return {
+                connected: false,
+                model: '🔴 Camera Agent belum dibangun'
+            };
+        }
         try {
             await releaseDesktopCameraClaim();
             await nativeCameraAgent.ping();
@@ -129,9 +136,10 @@ async function getStatus() {
             };
         } catch (error) {
             cameraConnected = false;
+            resetCameraUsb('inisialisasi Camera Agent gagal').catch(() => {});
             return {
                 connected: false,
-                model: `🔴 Camera Agent belum dapat membuka ${config.BOX_ID}`
+                model: `🟡 Camera Agent sedang memulihkan ${config.BOX_ID}`
             };
         }
     }
@@ -179,6 +187,7 @@ let lastFrameEmittedAt = 0;
 let liveViewMode = config.LIVEVIEW_MODE;
 let liveViewUsesShell = false;
 let lastCaptureRequestAt = 0;
+let cameraAgentMissingLogged = false;
 
 const MAX_LIVEVIEW_BUFFER_BYTES = 8 * 1024 * 1024;
 
@@ -265,7 +274,11 @@ async function capturePhoto(targetFolder) {
     try {
         await stopLiveViewTransport();
 
-        if (nativeCameraAgent.available) {
+        if (nativeCameraAgent.enabled) {
+            if (!nativeCameraAgent.available) {
+                console.log('⚠️ [CAMERA AGENT] Foto dibatalkan: binary agent belum dibangun.');
+                return null;
+            }
             console.log('📸 [CAMERA AGENT] Mengeksekusi pengambilan foto pada sesi persisten...');
             try {
                 await nativeCameraAgent.capture(filePath);
@@ -277,7 +290,7 @@ async function capturePhoto(targetFolder) {
                     }
                 } catch (_) {}
 
-                console.log(`❌ [CAMERA AGENT] Pengambilan foto gagal: ${error.message}`);
+                console.log('⚠️ [CAMERA AGENT] Koneksi terputus saat foto; memulihkan otomatis.');
                 await resetCameraUsb('Camera Agent gagal mengambil foto');
                 return null;
             }
@@ -358,7 +371,12 @@ async function runCameraControl(args, fallbackArgs = null) {
     const shouldResumeLiveView = isLiveViewActive;
     await stopLiveViewTransport();
 
-    if (nativeCameraAgent.available) {
+    if (nativeCameraAgent.enabled) {
+        if (!nativeCameraAgent.available) {
+            console.log('⚠️ [CAMERA AGENT] Kontrol dibatalkan: binary agent belum dibangun.');
+            isCameraBusy = false;
+            return;
+        }
         const applyArgs = async (selectedArgs) => {
             const assignment = selectedArgs?.[1] || '';
             const separator = assignment.indexOf('=');
@@ -613,7 +631,7 @@ function startGphotoPreviewShell(onFrameCallback, generation) {
                         liveViewRestartAttempt = 0;
                         if (requestWatchdog) clearTimeout(requestWatchdog);
                         onFrameCallback(frame.toString('base64'));
-                        const frameDelay = Math.max(500, Math.round(1000 / targetLiveViewFps));
+                        const frameDelay = Math.max(34, Math.round(1000 / targetLiveViewFps));
                         requestTimer = setTimeout(requestFrame, frameDelay);
                         requestTimer.unref?.();
                         return;
@@ -715,8 +733,8 @@ async function captureNativeAgentFrame(onFrameCallback, generation) {
         }
     } catch (error) {
         cameraConnected = false;
-        console.log(`⚠️ [CAMERA AGENT] Preview gagal: ${error.message}`);
-        const recovered = await resetCameraUsb(`Camera Agent preview gagal: ${error.message}`);
+        console.log('⚠️ [CAMERA AGENT] Preview terputus; memulihkan otomatis.');
+        const recovered = await resetCameraUsb('Camera Agent preview terputus');
         recoveryDelay = recovered ? 1200 : 15000;
     } finally {
         isCapturingFrame = false;
@@ -727,7 +745,7 @@ async function captureNativeAgentFrame(onFrameCallback, generation) {
         scheduleLiveViewStart(recoveryDelay, generation);
         return;
     }
-    const frameDelay = Math.max(250, Math.round(1000 / targetLiveViewFps));
+    const frameDelay = Math.max(34, Math.round(1000 / targetLiveViewFps));
     const elapsed = Date.now() - cycleStartedAt;
     scheduleLiveViewStart(Math.max(0, frameDelay - elapsed), generation);
 }
@@ -765,8 +783,19 @@ function scheduleLiveViewStart(delayMs, generation = liveViewGeneration) {
             captureV4l2Frame(globalOnFrameCallback, generation);
             return;
         }
-        if (nativeCameraAgent.available) {
-            captureNativeAgentFrame(globalOnFrameCallback, generation).catch(() => {});
+        if (nativeCameraAgent.enabled) {
+            if (nativeCameraAgent.available) {
+                cameraAgentMissingLogged = false;
+                captureNativeAgentFrame(globalOnFrameCallback, generation).catch(() => {});
+                return;
+            }
+            cameraConnected = false;
+            if (!cameraAgentMissingLogged) {
+                cameraAgentMissingLogged = true;
+                console.log('⚠️ [CAMERA AGENT] Binary belum dibangun; fallback gphoto2 diblokir demi keamanan shutter.');
+                console.log('ℹ️ [CAMERA AGENT] Jalankan sekali: bash scripts/build-camera-agent.sh');
+            }
+            scheduleLiveViewStart(15000, generation);
             return;
         }
         releaseDesktopCameraClaim()
@@ -786,14 +815,14 @@ function scheduleLiveViewStart(delayMs, generation = liveViewGeneration) {
 }
 
 function setTargetFps(fps, activeCount = 0) {
-    const parsedFps = Number(fps);
-    const nextFps = Number.isFinite(parsedFps)
-        ? Math.max(1, Math.min(30, Math.round(parsedFps)))
-        : config.LIVEVIEW_FALLBACK_FPS;
+    // Photobox A memakai target tetap agar dashboard tidak menurunkan 30 FPS
+    // menjadi alokasi 8 FPS. Parameter tetap diterima untuk kompatibilitas API.
+    void fps;
+    const nextFps = Math.max(1, Math.min(30, Math.round(config.LIVEVIEW_TARGET_FPS)));
 
     if (nextFps === targetLiveViewFps) return;
     targetLiveViewFps = nextFps;
-    const source = activeCount > 0 ? `${activeCount} liveview aktif` : 'mode aman';
+    const source = activeCount > 0 ? `${activeCount} liveview aktif, mode tetap` : 'mode tetap';
     console.log(`⚖️ [LIVEVIEW BALANCER] Target ${targetLiveViewFps} FPS (${source}).`);
 }
 

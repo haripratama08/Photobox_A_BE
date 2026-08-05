@@ -13,9 +13,12 @@ class NativeCameraAgent {
         this.stderrText = '';
     }
 
+    get enabled() {
+        return process.platform !== 'win32' && config.CAMERA_AGENT_ENABLED;
+    }
+
     get available() {
-        return process.platform !== 'win32'
-            && config.CAMERA_AGENT_ENABLED
+        return this.enabled
             && fs.existsSync(config.CAMERA_AGENT_BIN);
     }
 
