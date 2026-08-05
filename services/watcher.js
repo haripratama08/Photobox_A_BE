@@ -16,6 +16,10 @@ const initWatcher = (io) => {
         usePolling: false 
     }).on('add', (filePath) => {
         const filename = path.basename(filePath);
+        // File tersembunyi/.tmp hanya dipakai preflight untuk menguji akses
+        // tulis dan langsung dihapus; jangan diproses sebagai hasil foto.
+        if (filename.startsWith('.') || filename.endsWith('.tmp')) return;
+
         const activeUserFolder = session.getActiveUserFolder();
         const userFolderPath = path.join(config.BASE_PHOTO_FOLDER, activeUserFolder);
         

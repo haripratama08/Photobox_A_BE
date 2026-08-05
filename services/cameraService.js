@@ -277,7 +277,11 @@ function startGphotoMovieStream(onFrameCallback, generation) {
     lastFrameEmittedAt = 0;
     const child = spawn(
         'gphoto2',
-        cameraArgs(['--capture-movie', '--stdout']),
+        cameraArgs([
+            '--set-config', 'viewfinder=1',
+            '--capture-movie',
+            '--stdout'
+        ]),
         { stdio: ['ignore', 'pipe', 'pipe'] }
     );
     liveViewProcess = child;
@@ -308,6 +312,9 @@ function startGphotoMovieStream(onFrameCallback, generation) {
         const reason = stderrText.trim().split(/\r?\n/).slice(-2).join(' ')
             || `exit=${code || signal}`;
         console.log(`⚠️ [LINUX CAMERA] LiveView terputus: ${reason}`);
+        if (/0\s*(frame|bingkai)|movie capture error|galat menangkap film/i.test(stderrText)) {
+            console.log('🎥 [LINUX CAMERA] Canon EOS harus berada pada mode Movie/Video untuk LiveView USB.');
+        }
         console.log(`⏳ [LINUX CAMERA] Mencoba lagi dalam ${retryDelay / 1000} detik...`);
         scheduleLiveViewStart(retryDelay, generation);
     });
@@ -385,8 +392,8 @@ function startLiveView(onFrameCallback) {
     isCapturingFrame = false;
     liveViewRestartAttempt = 0;
     latestLiveViewFrame = null;
-    // Jangan memaksa set-config viewfinder. capture-movie mengelola sesi
-    // LiveView Canon dan mempertahankan satu koneksi PTP selama layar aktif.
+    // viewfinder dan capture-movie dijalankan oleh proses gphoto2 yang sama
+    // sehingga aktivasi LiveView tidak membuka sesi PTP kedua.
     scheduleLiveViewStart(1000, generation);
 }
 
