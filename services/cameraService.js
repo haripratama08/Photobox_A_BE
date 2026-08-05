@@ -101,6 +101,7 @@ let liveViewRestartAttempt = 0;
 let liveViewFrameBuffer = Buffer.alloc(0);
 let latestLiveViewFrame = null;
 let lastFrameEmittedAt = 0;
+let liveViewMode = config.LIVEVIEW_MODE;
 
 const MAX_LIVEVIEW_BUFFER_BYTES = 8 * 1024 * 1024;
 
@@ -316,9 +317,11 @@ function startGphotoMovieStream(onFrameCallback, generation) {
     liveViewProcess = child;
     isCapturingFrame = true;
     let stderrText = '';
+    let receivedFrame = false;
 
     child.stdout.on('data', (data) => {
         if (isLiveViewActive && !isCameraBusy && generation === liveViewGeneration) {
+            if (data.indexOf(Buffer.from([0xff, 0xd8])) >= 0) receivedFrame = true;
             emitJpegFrames(data, onFrameCallback);
         }
     });
@@ -336,6 +339,14 @@ function startGphotoMovieStream(onFrameCallback, generation) {
         isCapturingFrame = false;
         if (!isLiveViewActive || isCameraBusy || generation !== liveViewGeneration) return;
 
+        if (!receivedFrame && /0\s*(frame|bingkai)|movie capture error|galat menangkap film/i.test(stderrText)) {
+            liveViewMode = 'preview';
+            liveViewRestartAttempt = 0;
+            console.log('🔄 [LINUX CAMERA] capture-movie tidak didukung; beralih ke mode capture-preview aman.');
+            scheduleLiveViewStart(1500, generation);
+            return;
+        }
+
         liveViewRestartAttempt += 1;
         const retryDelay = Math.min(15000, 2000 * liveViewRestartAttempt);
         const reason = stderrText.trim().split(/\r?\n/).slice(-2).join(' ')
@@ -347,6 +358,57 @@ function startGphotoMovieStream(onFrameCallback, generation) {
         console.log(`⏳ [LINUX CAMERA] Mencoba lagi dalam ${retryDelay / 1000} detik...`);
         scheduleLiveViewStart(retryDelay, generation);
     });
+}
+
+function captureGphotoPreviewFrame(onFrameCallback, generation) {
+    if (!isLiveViewActive || isCameraBusy || generation !== liveViewGeneration) return;
+    if (liveViewProcess && liveViewProcess.exitCode === null) return;
+
+    isCapturingFrame = true;
+    liveViewFrameBuffer = Buffer.alloc(0);
+    const cycleStartedAt = Date.now();
+    const child = execFile(
+        'gphoto2',
+        cameraArgs([
+            '--set-config', 'viewfinder=1',
+            '--capture-preview',
+            '--stdout'
+        ]),
+        {
+            encoding: 'buffer',
+            timeout: 15000,
+            maxBuffer: MAX_LIVEVIEW_BUFFER_BYTES
+        },
+        (error, stdout, stderr) => {
+            if (liveViewProcess === child) liveViewProcess = null;
+            isCapturingFrame = false;
+
+            const output = Buffer.isBuffer(stdout) ? stdout : Buffer.from(stdout || '');
+            const hasJpeg = output.indexOf(Buffer.from([0xff, 0xd8])) >= 0;
+            if (hasJpeg && isLiveViewActive && !isCameraBusy && generation === liveViewGeneration) {
+                emitJpegFrames(output, onFrameCallback);
+                liveViewRestartAttempt = 0;
+            } else if (error && isLiveViewActive && !isCameraBusy) {
+                liveViewRestartAttempt += 1;
+                const errorText = Buffer.isBuffer(stderr) ? stderr.toString() : `${stderr || error.message}`;
+                const retryDelay = Math.min(15000, 1500 * liveViewRestartAttempt);
+                console.log(`⚠️ [LINUX CAMERA] Preview gagal: ${errorText.trim().split(/\r?\n/).slice(-2).join(' ')}`);
+                scheduleLiveViewStart(retryDelay, generation);
+                return;
+            }
+
+            if (isLiveViewActive && !isCameraBusy && generation === liveViewGeneration) {
+                // Membuka sesi CLI untuk setiap frame dibatasi maksimal 2 FPS
+                // agar Canon sempat menutup sesi PTP dengan bersih.
+                const frameDelay = Math.max(500, Math.round(1000 / targetLiveViewFps));
+                scheduleLiveViewStart(
+                    Math.max(0, frameDelay - (Date.now() - cycleStartedAt)),
+                    generation
+                );
+            }
+        }
+    );
+    liveViewProcess = child;
 }
 
 function captureV4l2Frame(onFrameCallback, generation) {
@@ -386,7 +448,11 @@ function scheduleLiveViewStart(delayMs, generation = liveViewGeneration) {
             .then(() => delay(300))
             .then(() => {
                 if (isLiveViewActive && !isCameraBusy && generation === liveViewGeneration) {
-                    startGphotoMovieStream(globalOnFrameCallback, generation);
+                    if (liveViewMode === 'preview') {
+                        captureGphotoPreviewFrame(globalOnFrameCallback, generation);
+                    } else {
+                        startGphotoMovieStream(globalOnFrameCallback, generation);
+                    }
                 }
             })
             .catch(() => {});
