@@ -118,16 +118,23 @@ const sendFile = async (target, attachment, message = '') => {
             throw new Error(`${prepared.filename} masih melebihi batas unggahan Fonnte`);
         }
 
+        const mimeType = mimeForFile(prepared.filename);
+        const fileBlob = typeof File !== 'undefined'
+            ? new File([buffer], prepared.filename, { type: mimeType })
+            : new Blob([buffer], { type: mimeType });
+
         const form = new FormData();
         form.append('target', target);
-        form.append('message', message);
+        if (message) {
+            form.append('message', message);
+        }
         form.append('countryCode', '0');
         form.append('connectOnly', String(config.FONNTE_CONNECT_ONLY));
-        form.append(
-            'file',
-            new Blob([buffer], { type: mimeForFile(prepared.filename) }),
-            prepared.filename
-        );
+        form.append('filename', prepared.filename);
+        // Fonnte menerima field 'file' maupun 'url' untuk pengiriman berkas multipart
+        form.append('file', fileBlob, prepared.filename);
+        form.append('url', fileBlob, prepared.filename);
+
         return await fonnteRequest('/send', { body: form });
     } finally {
         if (prepared.temporary) {
@@ -173,24 +180,33 @@ const sendWhatsappJob = async (userWA, userName, attachments) => {
     const target = normalizeTarget(userWA);
     if (!target) throw new Error('Nomor WhatsApp tidak valid');
 
-    await sendText(
-        target,
-        `Halo *${userName}*! 👋\nIni hasil jepretan kamu dari Photobox. Terima kasih sudah mampir! 📸✨`
-    );
-    await sleep(config.FONNTE_REQUEST_DELAY_MS);
+    const greetingCaption = `Halo kak *${userName}*! ✨\nFoto photobox kamu udah siap nih 🥳\n\nMakasih yaa udah nyimpan kenangan bareng kita. Ditunggu kedatangannya lagi! 📸❤️`;
 
     const results = [];
+    let isFirstFile = true;
+
     for (const attachment of attachments) {
         try {
-            const result = await sendFile(target, attachment);
+            // Sertakan pesan sapaan sebagai caption di foto pertama
+            const caption = isFirstFile ? greetingCaption : '';
+            const result = await sendFile(target, attachment, caption);
             results.push({ filename: attachment.filename, queued: true, result });
-            console.log(`✅ [FONNTE] ${attachment.filename} masuk antrean pengiriman.`);
+            console.log(`✅ [FONNTE] ${attachment.filename} berhasil dikirim.`);
+            isFirstFile = false;
         } catch (error) {
             results.push({ filename: attachment.filename, queued: false, error: error.message });
             console.log(`❌ [FONNTE] ${attachment.filename} gagal: ${error.message}`);
         }
         await sleep(config.FONNTE_REQUEST_DELAY_MS);
     }
+
+    // Jika semua berkas foto gagal dikirim, kirim pesan teks sebagai fallback
+    const anyFileSent = results.some(r => r.queued);
+    if (!anyFileSent) {
+        console.log(`⚠️ Foto gagal dikirim via Fonnte, mengirimkan pesan teks sapaan...`);
+        await sendText(target, greetingCaption);
+    }
+
     return { skipped: false, target, results };
 };
 

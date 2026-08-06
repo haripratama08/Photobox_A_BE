@@ -8,7 +8,7 @@ let isLiveViewActive = false;
 let cameraConnected = false;
 let currentIso = "Auto";
 let currentShutter = "Auto";
-let targetLiveViewFps = Math.max(1, Math.min(30, config.LIVEVIEW_TARGET_FPS));
+let targetLiveViewFps = Math.max(1, Math.min(120, config.LIVEVIEW_TARGET_FPS));
 let liveViewGeneration = 0;
 
 const cameraArgs = (args) => {
@@ -631,7 +631,7 @@ function startGphotoPreviewShell(onFrameCallback, generation) {
                         liveViewRestartAttempt = 0;
                         if (requestWatchdog) clearTimeout(requestWatchdog);
                         onFrameCallback(frame.toString('base64'));
-                        const frameDelay = Math.max(34, Math.round(1000 / targetLiveViewFps));
+                        const frameDelay = Math.max(8, Math.round(1000 / targetLiveViewFps));
                         requestTimer = setTimeout(requestFrame, frameDelay);
                         requestTimer.unref?.();
                         return;
@@ -745,7 +745,7 @@ async function captureNativeAgentFrame(onFrameCallback, generation) {
         scheduleLiveViewStart(recoveryDelay, generation);
         return;
     }
-    const frameDelay = Math.max(34, Math.round(1000 / targetLiveViewFps));
+    const frameDelay = Math.max(8, Math.round(1000 / targetLiveViewFps));
     const elapsed = Date.now() - cycleStartedAt;
     scheduleLiveViewStart(Math.max(0, frameDelay - elapsed), generation);
 }
@@ -815,10 +815,11 @@ function scheduleLiveViewStart(delayMs, generation = liveViewGeneration) {
 }
 
 function setTargetFps(fps, activeCount = 0) {
-    // Photobox A memakai target tetap agar dashboard tidak menurunkan 30 FPS
-    // menjadi alokasi 8 FPS. Parameter tetap diterima untuk kompatibilitas API.
+    // Photobox A memakai target tetap dari .env (LIVEVIEW_TARGET_FPS).
+    // Dashboard tidak dapat menurunkan FPS. Cap dinaikkan ke 120 agar
+    // mendukung target 60-80 FPS untuk live view yang lebih smooth.
     void fps;
-    const nextFps = Math.max(1, Math.min(30, Math.round(config.LIVEVIEW_TARGET_FPS)));
+    const nextFps = Math.max(1, Math.min(120, Math.round(config.LIVEVIEW_TARGET_FPS)));
 
     if (nextFps === targetLiveViewFps) return;
     targetLiveViewFps = nextFps;
