@@ -125,9 +125,8 @@ const sendFile = async (target, attachment, message = '') => {
 
         const form = new FormData();
         form.append('target', target);
-        if (message) {
-            form.append('message', message);
-        }
+        // Fonnte API mewajibkan parameter 'message' tidak boleh string kosong ('')
+        form.append('message', message && message.trim() ? message : ' ');
         form.append('countryCode', '0');
         form.append('connectOnly', String(config.FONNTE_CONNECT_ONLY));
         form.append('filename', prepared.filename);
@@ -184,11 +183,14 @@ const sendWhatsappJob = async (userWA, userName, attachments) => {
 
     const results = [];
     let isFirstFile = true;
+    let photoCounter = 1;
 
     for (const attachment of attachments) {
         try {
-            // Sertakan pesan sapaan sebagai caption di foto pertama
-            const caption = isFirstFile ? greetingCaption : '';
+            // Foto pertama (Frame Kolase) mendapat pesan sapaan lengkap, foto berikutnya diberi label "📷 Foto 1", "📷 Foto 2"
+            const caption = isFirstFile 
+                ? greetingCaption 
+                : `📷 Foto ${photoCounter++}`;
             const result = await sendFile(target, attachment, caption);
             results.push({ filename: attachment.filename, queued: true, result });
             console.log(`✅ [FONNTE] ${attachment.filename} berhasil dikirim.`);
