@@ -45,6 +45,7 @@ module.exports = {
         'data/frames.json'
     ),
     PRINTER_NAME: process.env.PRINTER_NAME || "L8050_Series_Network",
+    PRINTER_MEDIA: process.env.PRINTER_MEDIA || "4x6",
     CAMERA_PORT: process.env.CAMERA_PORT || '',
     REQUIRE_CAMERA_PORT: process.env.REQUIRE_CAMERA_PORT !== 'false',
     REQUIRE_PRINTER: process.env.REQUIRE_PRINTER !== 'false',

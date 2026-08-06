@@ -9,6 +9,8 @@ const framesData = require(config.FRAMES_DATA_FILE);
 
 const queuePrint = async (finalCollagePath, printCopies) => {
     const copies = Math.max(1, Number(printCopies) || 1);
+    const mediaOption = config.PRINTER_MEDIA || '4x6';
+
     await withResourceLock(
         `printer:${config.PRINTER_NAME}`,
         () => new Promise((resolve, reject) => {
@@ -17,12 +19,14 @@ const queuePrint = async (finalCollagePath, printCopies) => {
                 [
                     '-d', config.PRINTER_NAME,
                     '-n', String(copies),
+                    '-o', `media=${mediaOption}`,
+                    '-o', 'fit-to-page',
                     finalCollagePath
                 ],
                 { timeout: 30000 },
                 (error, stdout) => {
                     if (error) return reject(error);
-                    console.log(`✅ [PRINT] Masuk antrean CUPS: ${stdout.trim()}`);
+                    console.log(`✅ [PRINT] Masuk antrean CUPS (${mediaOption}): ${stdout.trim()}`);
                     resolve();
                 }
             );
