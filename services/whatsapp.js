@@ -130,9 +130,8 @@ const sendFile = async (target, attachment, message = '') => {
         form.append('countryCode', '0');
         form.append('connectOnly', String(config.FONNTE_CONNECT_ONLY));
         form.append('filename', prepared.filename);
-        // Fonnte menerima field 'file' maupun 'url' untuk pengiriman berkas multipart
+        // Hanya sertakan 'file' untuk unggahan berkas multipart (JANGAN sertakan 'url' agar Fonnte tidak menganggapnya link web)
         form.append('file', fileBlob, prepared.filename);
-        form.append('url', fileBlob, prepared.filename);
 
         return await fonnteRequest('/send', { body: form });
     } finally {
