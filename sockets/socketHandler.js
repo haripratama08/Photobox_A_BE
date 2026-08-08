@@ -255,7 +255,17 @@ module.exports = (io) => {
                 }
                 if (userWA && attachments.length > 0) {
                     console.log(`📱 Mengirim WhatsApp ke ${userWA}...`);
-                    await sendWhatsappMsg(userWA, userName, attachments);
+                    const whatsappResult = await sendWhatsappMsg(
+                        userWA,
+                        userName,
+                        attachments
+                    );
+                    const sentCount = whatsappResult.results
+                        ? whatsappResult.results.filter((item) => item.queued).length
+                        : 0;
+                    console.log(
+                        `[FONNTE] ${sentCount}/${attachments.length} file diterima API.`
+                    );
                 }
 
                 console.log(`✅ Proses untuk ${userName} Selesai!`);

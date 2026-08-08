@@ -44,6 +44,10 @@ module.exports = {
         process.env.FRAMES_DATA_FILE,
         'data/frames.json'
     ),
+    DEVICE_CONFIG_FILE: resolveApiPath(
+        process.env.DEVICE_CONFIG_FILE,
+        'config/devices.json'
+    ),
     PRINTER_NAME: process.env.PRINTER_NAME || "L8050_Series_Network",
     PRINTER_MEDIA: process.env.PRINTER_MEDIA || "4x6",
     CAMERA_PORT: process.env.CAMERA_PORT || '',

@@ -1,0 +1,27 @@
+{
+  "version": 1,
+  "box_id": "Box A",
+  "camera": {
+    "serial": "",
+    "vendor_id": "04a9",
+    "product_id": "",
+    "usb_path": "",
+    "model": "Canon EOS 700D"
+  },
+  "printer": {
+    "queue": "PHOTO_PRINTER",
+    "preferred_make_model": "",
+    "device_uri": ""
+  },
+  "display": {
+    "connector": "",
+    "edid": ""
+  },
+  "touchscreen": {
+    "name": "",
+    "vendor_id": "",
+    "product_id": "",
+    "usb_path": "",
+    "map_to_connector": ""
+  }
+}

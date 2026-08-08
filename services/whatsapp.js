@@ -5,7 +5,10 @@ const sharp = require('sharp');
 const config = require('../config/config');
 const { withResourceLock } = require('./resourceLock');
 
-const MAX_UPLOAD_BYTES = 3.8 * 1024 * 1024;
+// Fonnte mendokumentasikan batas berkas 10 MB. Sisakan sedikit ruang untuk
+// overhead dan kompres hanya jika memang diperlukan.
+const MAX_UPLOAD_BYTES = 9.5 * 1024 * 1024;
+const FILE_UPLOAD_RETRIES = 3;
 const STATUS_CACHE_MS = 60 * 1000;
 let cachedStatus = null;
 let cachedStatusAt = 0;
@@ -47,8 +50,15 @@ const fonnteRequest = async (pathname, options = {}) => {
     }
 
     if (!response.ok || !responseSucceeded(payload)) {
+        const apiMessage = payload.reason
+            || payload.detail
+            || payload.message
+            || payload.error;
+        const payloadSummary = JSON.stringify(payload).slice(0, 500);
         throw new Error(
-            payload.reason || payload.detail || `Fonnte HTTP ${response.status}`
+            apiMessage
+                ? `${apiMessage} (HTTP ${response.status})`
+                : `Fonnte HTTP ${response.status}: ${payloadSummary}`
         );
     }
     return payload;
@@ -119,9 +129,7 @@ const sendFile = async (target, attachment, message = '') => {
         }
 
         const mimeType = mimeForFile(prepared.filename);
-        const fileBlob = typeof File !== 'undefined'
-            ? new File([buffer], prepared.filename, { type: mimeType })
-            : new Blob([buffer], { type: mimeType });
+        const fileBlob = new Blob([buffer], { type: mimeType });
 
         const form = new FormData();
         form.append('target', target);
@@ -185,18 +193,40 @@ const sendWhatsappJob = async (userWA, userName, attachments) => {
     let photoCounter = 1;
 
     for (const attachment of attachments) {
-        try {
-            // Foto pertama (Frame Kolase) mendapat pesan sapaan lengkap, foto berikutnya diberi label "📷 Foto 1", "📷 Foto 2"
-            const caption = isFirstFile 
-                ? greetingCaption 
-                : `📷 Foto ${photoCounter++}`;
-            const result = await sendFile(target, attachment, caption);
-            results.push({ filename: attachment.filename, queued: true, result });
-            console.log(`✅ [FONNTE] ${attachment.filename} berhasil dikirim.`);
+        const caption = isFirstFile
+            ? greetingCaption
+            : `Foto ${photoCounter}`;
+        let sentResult = null;
+        let lastError = null;
+
+        for (let attempt = 1; attempt <= FILE_UPLOAD_RETRIES; attempt += 1) {
+            try {
+                sentResult = await sendFile(target, attachment, caption);
+                break;
+            } catch (error) {
+                lastError = error;
+                console.log(
+                    `[FONNTE] ${attachment.filename} gagal `
+                    + `percobaan ${attempt}/${FILE_UPLOAD_RETRIES}: ${error.message}`
+                );
+                if (attempt < FILE_UPLOAD_RETRIES) {
+                    await sleep(1000 * attempt);
+                }
+            }
+        }
+
+        if (sentResult) {
+            results.push({ filename: attachment.filename, queued: true, result: sentResult });
+            console.log(`[FONNTE] File ${attachment.filename} diterima API Fonnte.`);
             isFirstFile = false;
-        } catch (error) {
-            results.push({ filename: attachment.filename, queued: false, error: error.message });
-            console.log(`❌ [FONNTE] ${attachment.filename} gagal: ${error.message}`);
+            photoCounter += 1;
+        } else {
+            results.push({
+                filename: attachment.filename,
+                queued: false,
+                error: lastError?.message || 'Unggahan ditolak tanpa alasan'
+            });
+            console.log(`[FONNTE] File ${attachment.filename} tidak terkirim.`);
         }
         await sleep(config.FONNTE_REQUEST_DELAY_MS);
     }
@@ -204,8 +234,12 @@ const sendWhatsappJob = async (userWA, userName, attachments) => {
     // Jika semua berkas foto gagal dikirim, kirim pesan teks sebagai fallback
     const anyFileSent = results.some(r => r.queued);
     if (!anyFileSent) {
-        console.log(`⚠️ Foto gagal dikirim via Fonnte, mengirimkan pesan teks sapaan...`);
+        console.log('[FONNTE] Semua unggahan file gagal; mengirim pemberitahuan teks.');
         await sendText(target, greetingCaption);
+        const details = results
+            .map((item) => `${item.filename}: ${item.error}`)
+            .join('; ');
+        throw new Error(`Semua file foto gagal dikirim. ${details}`);
     }
 
     return { skipped: false, target, results };

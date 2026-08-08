@@ -12,11 +12,22 @@ const socketHandler = require('./sockets/socketHandler');
 const watcherService = require('./services/watcher');
 const cameraService = require('./services/cameraService');
 const dashboardClient = require('./services/dashboardClient');
+const deviceAgent = require('./services/deviceAgent');
 
 fs.ensureDirSync(config.BASE_PHOTO_FOLDER);
 fs.ensureDirSync(config.FRAMES_FOLDER);
 app.use('/photos', express.static(config.BASE_PHOTO_FOLDER));
 app.use('/frames', express.static(config.FRAMES_FOLDER));
+
+app.get('/device-status', async (req, res) => {
+    try { res.json(await deviceAgent.getStatus()); }
+    catch (error) { res.status(500).json({ connected: false, error: error.message }); }
+});
+
+app.post('/device/apply-touch-mapping', async (req, res) => {
+    try { res.json(await deviceAgent.applyTouchMapping()); }
+    catch (error) { res.status(500).json({ applied: false, error: error.message }); }
+});
 
 // HALAMAN PREVIEW LIVEVIEW BROWSER (Sangat Enteng)
 app.get('/preview', (req, res) => {
