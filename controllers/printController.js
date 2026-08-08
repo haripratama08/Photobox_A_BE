@@ -26,6 +26,8 @@ const queuePrint = async (finalCollagePath, printCopies) => {
                     '-n', String(copies),
                     '-o', `media=${mediaOption}`,
                     '-o', 'fit-to-page',
+                    '-o', 'print-quality=5',
+                    '-o', `resolution=${config.PRINT_DPI}dpi`,
                     finalCollagePath
                 ],
                 { timeout: 30000 },
@@ -64,8 +66,8 @@ const processAndPrint = async ({
     if (frameName && photos && photos.length > 0) {
         const frameConfig = framesData.find((frame) => frame.name === frameName);
         if (frameConfig) {
-            const baseWidth = 1800;
-            const baseHeight = 2700;
+            const baseWidth = config.PRINT_WIDTH;
+            const baseHeight = config.PRINT_HEIGHT;
             const frameFileName = path.basename(
                 new URL(frameConfig.asset_path, config.PUBLIC_BASE_URL).pathname
             );
@@ -123,7 +125,7 @@ const processAndPrint = async ({
             })
                 .composite(compositeOperations)
                 .withMetadata({ density: 450 })
-                .png()
+                .png({ compressionLevel: 6, adaptiveFiltering: true })
                 .toFile(finalCollagePath);
 
             console.log(`✅ Kolase high-res berhasil dibuat: ${finalCollagePath}`);
