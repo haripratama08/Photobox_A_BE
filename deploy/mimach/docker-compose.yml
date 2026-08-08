@@ -1,0 +1,14 @@
+services:
+  wa-gateway:
+    container_name: wa-gateway
+    image: mimamch/wa-gateway:latest
+    restart: unless-stopped
+    ports:
+      - "5001:5001"
+    volumes:
+      - ./wa_credentials:/app/wa_credentials
+      - ./media:/app/media
+    environment:
+      KEY: ganti-dengan-key-sendiri
+      WEBHOOK_BASE_URL: ""
+      REDIS_URL: ""

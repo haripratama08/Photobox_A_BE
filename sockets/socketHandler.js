@@ -257,7 +257,7 @@ module.exports = (io) => {
                         ? whatsappResult.results.filter((item) => item.queued).length
                         : 0;
                     console.log(
-                        `[FONNTE] ${sentCount}/${attachments.length} file diterima API.`
+                        `[${String(config.WHATSAPP_PROVIDER).toUpperCase()}] ${sentCount}/${attachments.length} file diterima gateway.`
                     );
                 }
 

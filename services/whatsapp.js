@@ -5,6 +5,7 @@ const sharp = require('sharp');
 const config = require('../config/config');
 const logger = require('./logger');
 const { withResourceLock } = require('./resourceLock');
+const mimach = require('./mimach');
 
 // Fonnte mendokumentasikan batas berkas 10 MB. Sisakan sedikit ruang untuk
 // overhead dan kompres hanya jika memang diperlukan.
@@ -155,6 +156,9 @@ const sendFile = async (target, attachment, message = '') => {
 };
 
 const getWhatsappStatus = async () => {
+    if (config.WHATSAPP_PROVIDER === 'mimach') {
+        return mimach.getWhatsappStatus();
+    }
     if (!config.ENABLE_WHATSAPP) {
         return { ok: false, message: 'Pengiriman WhatsApp dinonaktifkan' };
     }
@@ -262,6 +266,9 @@ const sendWhatsappJob = async (userWA, userName, attachments) => {
 
 const sendWhatsappMsg = (userWA, userName, attachments) => {
     if (!userWA || attachments.length === 0) return Promise.resolve({ skipped: true });
+    if (config.WHATSAPP_PROVIDER === 'mimach') {
+        return mimach.sendWhatsappMsg(userWA, userName, attachments);
+    }
     if (!config.ENABLE_WHATSAPP || !config.FONNTE_TOKEN) {
         return sendWhatsappJob(userWA, userName, attachments);
     }
