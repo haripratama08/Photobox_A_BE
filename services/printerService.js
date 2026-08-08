@@ -11,6 +11,30 @@ const run = (args) => new Promise((resolve) => {
 let cachedQueue = null;
 let cachedAt = 0;
 
+async function discoverDeviceUri() {
+    const result = await new Promise((resolve) => {
+        execFile('lpinfo', ['-v'], { timeout: 8000, encoding: 'utf8' }, (error, stdout = '', stderr = '') =>
+            resolve({ ok: !error, stdout, stderr }));
+    });
+    const devices = result.stdout.split(/\r?\n/)
+        .map((line) => line.match(/^\s*network\s+(.+)$/i)?.[1]?.trim())
+        .filter(Boolean);
+    const uri = devices.find((value) => /epson|l8050|dnssd|pdl-datastream/i.test(value)) || null;
+    logger.info('printer_discovery', { uri, devices });
+    return uri;
+}
+
+async function updateQueueUri(queue, uri) {
+    if (!queue || !uri) return false;
+    const result = await new Promise((resolve) => {
+        execFile('lpadmin', ['-p', queue, '-v', uri], { timeout: 10000, encoding: 'utf8' }, (error, stdout = '', stderr = '') =>
+            resolve({ ok: !error, stdout, stderr, error }));
+    });
+    if (result.ok) logger.info('printer_uri_updated', { queue, uri });
+    else logger.warn('printer_uri_update_failed', { queue, uri, error: result.stderr || result.error?.message });
+    return result.ok;
+}
+
 async function resolveQueue(force = false) {
     if (!force && cachedQueue && Date.now() - cachedAt < 30000) return cachedQueue;
     const [printers, devices] = await Promise.all([run(['-p']), run(['-v'])]);
@@ -29,6 +53,10 @@ async function resolveQueue(force = false) {
     const namedEpson = queues.find((name) => /epson|l8050|photo_printer/i.test(name));
     cachedQueue = preferred || namedEpson || queues[0] || null;
     cachedAt = Date.now();
+    if (cachedQueue) {
+        const discoveredUri = await discoverDeviceUri();
+        await updateQueueUri(cachedQueue, discoveredUri);
+    }
     logger.info('printer_resolved', { queue: cachedQueue, configured, queues });
     return cachedQueue;
 }
