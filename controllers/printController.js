@@ -12,9 +12,10 @@ const framesData = require(config.FRAMES_DATA_FILE);
 const queuePrint = async (finalCollagePath, printCopies) => {
     const copies = Math.max(1, Number(printCopies) || 1);
     const mediaOption = config.PRINTER_MEDIA || '4x6';
+    const mediaType = config.PRINTER_MEDIA_TYPE || 'GLOSSYPHOTO_HIGH';
     const printerQueue = await printerService.resolveQueue();
     if (!printerQueue) throw new Error('Tidak ada printer CUPS yang terdeteksi');
-    logger.info('print_start', { printer: printerQueue, file: finalCollagePath, copies, media: mediaOption });
+    logger.info('print_start', { printer: printerQueue, file: finalCollagePath, copies, media: mediaOption, mediaType });
 
     await withResourceLock(
         `printer:${printerQueue}`,
@@ -25,6 +26,7 @@ const queuePrint = async (finalCollagePath, printCopies) => {
                     '-d', printerQueue,
                     '-n', String(copies),
                     '-o', `media=${mediaOption}`,
+                    '-o', `MediaType=${mediaType}`,
                     '-o', 'fit-to-page',
                     '-o', 'print-quality=5',
                     '-o', `resolution=${config.PRINT_DPI}dpi`,

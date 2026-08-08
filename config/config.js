@@ -51,6 +51,7 @@ module.exports = {
     LOG_FILE: resolveApiPath(process.env.LOG_FILE, 'state/logs/photobox.jsonl'),
     PRINTER_NAME: process.env.PRINTER_NAME || "L8050_Series_Network",
     PRINTER_MEDIA: process.env.PRINTER_MEDIA || "4x6",
+    PRINTER_MEDIA_TYPE: process.env.PRINTER_MEDIA_TYPE || 'GLOSSYPHOTO_HIGH',
     PRINT_WIDTH: Number(process.env.PRINT_WIDTH || 2400),
     PRINT_HEIGHT: Number(process.env.PRINT_HEIGHT || 3600),
     PRINT_DPI: Number(process.env.PRINT_DPI || 600),
