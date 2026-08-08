@@ -50,9 +50,12 @@ module.exports = {
     ),
     LOG_FILE: resolveApiPath(process.env.LOG_FILE, 'state/logs/photobox.jsonl'),
     PRINTER_NAME: process.env.PRINTER_NAME || "L8050_Series_Network",
-    // Epson L8050 PPD menyediakan 4X6FULL untuk 10x15 cm borderless.
-    PRINTER_MEDIA: process.env.PRINTER_MEDIA || "4X6FULL",
+    // Pada PPD Epson ESC/P-R, awalan T menandakan ukuran tanpa batas.
+    PRINTER_MEDIA: process.env.PRINTER_MEDIA || 'T4X6FULL',
     PRINTER_MEDIA_TYPE: process.env.PRINTER_MEDIA_TYPE || 'PLAIN_HIGH',
+    PRINTER_BORDERLESS: process.env.PRINTER_BORDERLESS !== 'false',
+    PRINTER_BORDERLESS_MEDIA_TYPE: process.env.PRINTER_BORDERLESS_MEDIA_TYPE || 'GLOSSYPHOTO_HIGH',
+    PRINT_BORDERLESS_OVERSCAN: Number(process.env.PRINT_BORDERLESS_OVERSCAN || 106),
     PRINTER_INK: process.env.PRINTER_INK || 'COLOR',
     PRINT_WIDTH: Number(process.env.PRINT_WIDTH || 2400),
     PRINT_HEIGHT: Number(process.env.PRINT_HEIGHT || 3600),

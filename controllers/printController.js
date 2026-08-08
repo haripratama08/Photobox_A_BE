@@ -11,11 +11,22 @@ const framesData = require(config.FRAMES_DATA_FILE);
 
 const queuePrint = async (finalCollagePath, printCopies) => {
     const copies = Math.max(1, Number(printCopies) || 1);
-    // Kompatibilitas dengan .env lama yang masih berisi "4x6".
-    const mediaOption = /^4x6$/i.test(config.PRINTER_MEDIA || '')
-        ? '4X6FULL'
-        : (config.PRINTER_MEDIA || '4X6FULL');
-    const mediaType = config.PRINTER_MEDIA_TYPE || 'PLAIN_HIGH';
+    const configuredMedia = config.PRINTER_MEDIA || 'T4X6FULL';
+    // Epson ESC/P-R memakai T4X6FULL untuk 4 x 6 inci tanpa batas.
+    // Konfigurasi lama 4x6/4X6FULL otomatis dinaikkan ke borderless.
+    const isFourBySix = /^(?:4x6|4X6FULL|T4X6FULL)$/i.test(configuredMedia);
+    const borderless = config.PRINTER_BORDERLESS && isFourBySix;
+    const mediaOption = borderless ? 'T4X6FULL' : configuredMedia;
+    const requestedMediaType = config.PRINTER_MEDIA_TYPE || 'PLAIN_HIGH';
+    // PPD Epson menolak kombinasi borderless dengan PLAIN_HIGH. Gunakan
+    // mode foto saat borderless agar driver tidak kembali ke halaman bermargin.
+    const mediaType = borderless && /^PLAIN_/i.test(requestedMediaType)
+        ? config.PRINTER_BORDERLESS_MEDIA_TYPE
+        : requestedMediaType;
+    const overscan = Math.min(
+        120,
+        Math.max(100, Number(config.PRINT_BORDERLESS_OVERSCAN) || 106)
+    );
     const ink = config.PRINTER_INK || 'COLOR';
     const printerQueue = await printerService.resolveQueue();
     if (!printerQueue) throw new Error('Tidak ada printer CUPS yang terdeteksi');
@@ -25,27 +36,35 @@ const queuePrint = async (finalCollagePath, printCopies) => {
         copies,
         media: mediaOption,
         mediaType,
+        requestedMediaType,
         ink,
         dpi: config.PRINT_DPI,
-        fitToPage: true
+        borderless,
+        overscan: borderless ? overscan : null,
+        fitToPage: !borderless
     });
 
     await withResourceLock(
         `printer:${printerQueue}`,
         () => new Promise((resolve, reject) => {
+            const lpArguments = [
+                '-d', printerQueue,
+                '-n', String(copies),
+                '-o', `PageSize=${mediaOption}`,
+                '-o', `MediaType=${mediaType}`,
+                '-o', `Ink=${ink}`,
+                '-o', 'print-quality=5',
+                '-o', `resolution=${config.PRINT_DPI}dpi`,
+                '-o', 'job-sheets=none,none',
+                '-o', 'position=center',
+                ...(borderless
+                    ? ['-o', `scaling=${overscan}`]
+                    : ['-o', 'fit-to-page']),
+                finalCollagePath
+            ];
             execFile(
                 'lp',
-                [
-                    '-d', printerQueue,
-                    '-n', String(copies),
-                    '-o', `PageSize=${mediaOption}`,
-                    '-o', `MediaType=${mediaType}`,
-                    '-o', `Ink=${ink}`,
-                    '-o', 'fit-to-page',
-                    '-o', 'print-quality=5',
-                    '-o', `resolution=${config.PRINT_DPI}dpi`,
-                    finalCollagePath
-                ],
+                lpArguments,
                 { timeout: 30000 },
                 (error, stdout) => {
                     if (error) {
