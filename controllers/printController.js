@@ -11,11 +11,24 @@ const framesData = require(config.FRAMES_DATA_FILE);
 
 const queuePrint = async (finalCollagePath, printCopies) => {
     const copies = Math.max(1, Number(printCopies) || 1);
-    const mediaOption = config.PRINTER_MEDIA || '4x6';
-    const mediaType = config.PRINTER_MEDIA_TYPE || 'GLOSSYPHOTO_HIGH';
+    // Kompatibilitas dengan .env lama yang masih berisi "4x6".
+    const mediaOption = /^4x6$/i.test(config.PRINTER_MEDIA || '')
+        ? '4X6FULL'
+        : (config.PRINTER_MEDIA || '4X6FULL');
+    const mediaType = config.PRINTER_MEDIA_TYPE || 'PLAIN_HIGH';
+    const ink = config.PRINTER_INK || 'COLOR';
     const printerQueue = await printerService.resolveQueue();
     if (!printerQueue) throw new Error('Tidak ada printer CUPS yang terdeteksi');
-    logger.info('print_start', { printer: printerQueue, file: finalCollagePath, copies, media: mediaOption, mediaType });
+    logger.info('print_start', {
+        printer: printerQueue,
+        file: finalCollagePath,
+        copies,
+        media: mediaOption,
+        mediaType,
+        ink,
+        dpi: config.PRINT_DPI,
+        fitToPage: true
+    });
 
     await withResourceLock(
         `printer:${printerQueue}`,
@@ -25,8 +38,9 @@ const queuePrint = async (finalCollagePath, printCopies) => {
                 [
                     '-d', printerQueue,
                     '-n', String(copies),
-                    '-o', `media=${mediaOption}`,
+                    '-o', `PageSize=${mediaOption}`,
                     '-o', `MediaType=${mediaType}`,
+                    '-o', `Ink=${ink}`,
                     '-o', 'fit-to-page',
                     '-o', 'print-quality=5',
                     '-o', `resolution=${config.PRINT_DPI}dpi`,
