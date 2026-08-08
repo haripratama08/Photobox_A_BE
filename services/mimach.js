@@ -53,7 +53,7 @@ const mediaUrl = (filePath) => {
     return `${config.MIMACH_MEDIA_BASE_URL}/${relative}`;
 };
 
-const sendAttachment = (target, attachment, caption) => {
+const sendAttachment = (target, attachment, caption, attachmentUrl) => {
     const extension = path.extname(attachment.filename).toLowerCase();
     const image = ['.jpg', '.jpeg', '.png', '.webp'].includes(extension);
     const common = {
@@ -63,10 +63,10 @@ const sendAttachment = (target, attachment, caption) => {
         is_group: false
     };
     return image
-        ? requestJson('/message/send-image', { ...common, image_url: mediaUrl(attachment.path) })
+        ? requestJson('/message/send-image', { ...common, image_url: attachmentUrl })
         : requestJson('/message/send-document', {
             ...common,
-            document_url: mediaUrl(attachment.path),
+            document_url: attachmentUrl,
             document_name: attachment.filename
         });
 };
@@ -84,13 +84,16 @@ const sendWhatsappJob = async (userWA, userName, attachments) => {
     for (let index = 0; index < attachments.length; index += 1) {
         const attachment = attachments[index];
         const caption = index === 0 ? greeting : `Foto ${index + 1}`;
+        let attachmentUrl = null;
         try {
             await fs.access(attachment.path);
-            const payload = await sendAttachment(target, attachment, caption);
+            attachmentUrl = mediaUrl(attachment.path);
+            const payload = await sendAttachment(target, attachment, caption, attachmentUrl);
             logger.info('mimach_api_response', {
                 target,
                 session: config.MIMACH_SESSION,
                 filename: attachment.filename,
+                media_url: attachmentUrl,
                 status: true,
                 detail: typeof payload === 'object' ? payload.message || payload.detail || null : payload
             });
@@ -98,7 +101,12 @@ const sendWhatsappJob = async (userWA, userName, attachments) => {
             results.push({ filename: attachment.filename, queued: true, result: payload });
         } catch (error) {
             logger.error('whatsapp_file_failed', {
-                provider: 'mimach', target, filename: attachment.filename, error: error.message
+                provider: 'mimach',
+                target,
+                session: config.MIMACH_SESSION,
+                filename: attachment.filename,
+                media_url: attachmentUrl,
+                error: error.message
             });
             results.push({ filename: attachment.filename, queued: false, error: error.message });
         }
