@@ -3,6 +3,7 @@ const os = require('os');
 const path = require('path');
 const sharp = require('sharp');
 const config = require('../config/config');
+const logger = require('./logger');
 const { withResourceLock } = require('./resourceLock');
 
 // Fonnte mendokumentasikan batas berkas 10 MB. Sisakan sedikit ruang untuk
@@ -218,6 +219,7 @@ const sendWhatsappJob = async (userWA, userName, attachments) => {
         if (sentResult) {
             results.push({ filename: attachment.filename, queued: true, result: sentResult });
             console.log(`[FONNTE] File ${attachment.filename} diterima API Fonnte.`);
+            logger.info('whatsapp_file_sent', { target, filename: attachment.filename });
             isFirstFile = false;
             photoCounter += 1;
         } else {
@@ -227,6 +229,7 @@ const sendWhatsappJob = async (userWA, userName, attachments) => {
                 error: lastError?.message || 'Unggahan ditolak tanpa alasan'
             });
             console.log(`[FONNTE] File ${attachment.filename} tidak terkirim.`);
+            logger.error('whatsapp_file_failed', { target, filename: attachment.filename, error: lastError?.message });
         }
         await sleep(config.FONNTE_REQUEST_DELAY_MS);
     }
@@ -239,6 +242,7 @@ const sendWhatsappJob = async (userWA, userName, attachments) => {
         const details = results
             .map((item) => `${item.filename}: ${item.error}`)
             .join('; ');
+        logger.error('whatsapp_all_files_failed', { target, details });
         throw new Error(`Semua file foto gagal dikirim. ${details}`);
     }
 

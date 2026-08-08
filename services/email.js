@@ -1,5 +1,6 @@
 const nodemailer = require('nodemailer');
 const config = require('../config/config');
+const logger = require('./logger');
 
 const transporter = nodemailer.createTransport({
     service: 'gmail',
@@ -10,7 +11,10 @@ const transporter = nodemailer.createTransport({
 });
 
 const sendEmailMsg = async (userEmail, userName, attachments) => {
-    if (!userEmail || attachments.length === 0) return;
+    if (!userEmail || attachments.length === 0) {
+        logger.warn('email_skipped', { reason: !userEmail ? 'email kosong' : 'tidak ada lampiran' });
+        return { skipped: true };
+    }
 
     console.log(`⏳ Mengirim Email ke: ${userEmail}...`);
     try {
@@ -22,7 +26,10 @@ const sendEmailMsg = async (userEmail, userName, attachments) => {
             attachments: attachments
         });
         console.log(`✅ [EMAIL] Sukses terkirim!`);
+        logger.info('email_sent', { to: userEmail, attachments: attachments.map((item) => item.filename) });
+        return { skipped: false, sent: true };
     } catch (err) {
+        logger.error('email_failed', { to: userEmail, error: err.message, attachments: attachments.map((item) => item.filename) });
         console.log(`❌ [EMAIL] Gagal:`, err.message);
     }
 };

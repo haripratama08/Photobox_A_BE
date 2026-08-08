@@ -4,20 +4,25 @@ const path = require('path');
 const sharp = require('sharp');
 const config = require('../config/config');
 const { withResourceLock } = require('../services/resourceLock');
+const logger = require('../services/logger');
+const printerService = require('../services/printerService');
 
 const framesData = require(config.FRAMES_DATA_FILE);
 
 const queuePrint = async (finalCollagePath, printCopies) => {
     const copies = Math.max(1, Number(printCopies) || 1);
     const mediaOption = config.PRINTER_MEDIA || '4x6';
+    const printerQueue = await printerService.resolveQueue();
+    if (!printerQueue) throw new Error('Tidak ada printer CUPS yang terdeteksi');
+    logger.info('print_start', { printer: printerQueue, file: finalCollagePath, copies, media: mediaOption });
 
     await withResourceLock(
-        `printer:${config.PRINTER_NAME}`,
+        `printer:${printerQueue}`,
         () => new Promise((resolve, reject) => {
             execFile(
                 'lp',
                 [
-                    '-d', config.PRINTER_NAME,
+                    '-d', printerQueue,
                     '-n', String(copies),
                     '-o', `media=${mediaOption}`,
                     '-o', 'fit-to-page',
@@ -25,8 +30,12 @@ const queuePrint = async (finalCollagePath, printCopies) => {
                 ],
                 { timeout: 30000 },
                 (error, stdout) => {
-                    if (error) return reject(error);
+                    if (error) {
+                        logger.error('print_failed', { printer: printerQueue, file: finalCollagePath, error: error.message, stderr: error.stderr });
+                        return reject(error);
+                    }
                     console.log(`✅ [PRINT] Masuk antrean CUPS (${mediaOption}): ${stdout.trim()}`);
+                    logger.info('print_queued', { printer: printerQueue, output: stdout.trim() });
                     resolve();
                 }
             );
@@ -144,6 +153,7 @@ const processAndPrint = async ({
         console.log(
             `⚠️ [PRINT] Gagal masuk antrean ${config.PRINTER_NAME}: ${error.message}`
         );
+        logger.error('print_pipeline_failed', { printer: config.PRINTER_NAME, file: finalCollagePath, error: error.message });
     }
 
     return finalCollagePath;

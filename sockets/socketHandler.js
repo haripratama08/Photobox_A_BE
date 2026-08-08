@@ -10,21 +10,12 @@ const { sendWhatsappMsg, getWhatsappStatus } = require('../services/whatsapp');
 const { sendEmailMsg } = require('../services/email');
 const cameraService = require('../services/cameraService');
 const dashboardClient = require('../services/dashboardClient');
+const logger = require('../services/logger');
+const printerService = require('../services/printerService');
 
 let CONFIG_MIRROR = false;
 
-const checkPrinter = () => new Promise((resolve) => {
-    execFile('lpstat', ['-p', config.PRINTER_NAME], { timeout: 4000 },
-        (error, stdout = '') => {
-            const ok = !error && stdout.toLowerCase().includes('printer');
-            resolve({
-                ok,
-                message: ok
-                    ? `Printer ${config.PRINTER_NAME} siap`
-                    : `Printer ${config.PRINTER_NAME} tidak siap`
-            });
-        });
-});
+const checkPrinter = () => printerService.status();
 
 const checkWritableStorage = async (folderPath, label) => {
     try {
@@ -198,6 +189,7 @@ module.exports = (io) => {
                 console.log(`📝 Permintaan Cetak: ${printCopies} Lembar`);
                 if (frameName) console.log(`🖼️ Menggunakan Frame: ${frameName}`);
 
+                logger.info('session_results_received', { user: userName, email: userEmail || null, whatsapp: Boolean(userWA), printCopies, frameName: frameName || null });
                 const activeFolder = session.getActiveUserFolder();
                 const userFolderPath = path.join(config.BASE_PHOTO_FOLDER, activeFolder);
                 fs.ensureDirSync(userFolderPath);
@@ -249,6 +241,7 @@ module.exports = (io) => {
                     attachments.push({ filename: path.basename(file.path), path: file.path });
                 });
 
+                logger.info('attachments_ready', { user: userName, count: attachments.length, files: attachments.map((item) => item.filename) });
                 if (userEmail && attachments.length > 0) {
                     console.log(`📧 Mengirim Email ke ${userEmail}...`);
                     await sendEmailMsg(userEmail, userName, attachments);
@@ -275,6 +268,7 @@ module.exports = (io) => {
                 });
 
             } catch (fatalError) {
+                logger.error('session_results_failed', { error: fatalError.message, stack: fatalError.stack });
                 console.log(`🚨 ERROR SAAT PROSES DATA:`, fatalError.message);
             }
         });

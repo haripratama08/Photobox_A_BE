@@ -48,6 +48,7 @@ module.exports = {
         process.env.DEVICE_CONFIG_FILE,
         'config/devices.json'
     ),
+    LOG_FILE: resolveApiPath(process.env.LOG_FILE, 'state/logs/photobox.jsonl'),
     PRINTER_NAME: process.env.PRINTER_NAME || "L8050_Series_Network",
     PRINTER_MEDIA: process.env.PRINTER_MEDIA || "4x6",
     CAMERA_PORT: process.env.CAMERA_PORT || '',
