@@ -138,7 +138,11 @@ const sendFile = async (target, attachment, message = '') => {
         form.append('message', message && message.trim() ? message : ' ');
         form.append('countryCode', '0');
         form.append('connectOnly', String(config.FONNTE_CONNECT_ONLY));
-        form.append('filename', prepared.filename);
+        // Fonnte hanya memakai filename untuk dokumen/audio. Untuk gambar,
+        // filename dapat membuat request diterima sebagai teks tanpa media.
+        if (!/^image\//i.test(mimeType) && !/^video\//i.test(mimeType)) {
+            form.append('filename', prepared.filename);
+        }
         // Hanya sertakan 'file' untuk unggahan berkas multipart (JANGAN sertakan 'url' agar Fonnte tidak menganggapnya link web)
         form.append('file', fileBlob, prepared.filename);
 
@@ -203,6 +207,13 @@ const sendWhatsappJob = async (userWA, userName, attachments) => {
         for (let attempt = 1; attempt <= FILE_UPLOAD_RETRIES; attempt += 1) {
             try {
                 sentResult = await sendFile(target, attachment, caption);
+                logger.info('whatsapp_api_response', {
+                    target,
+                    filename: attachment.filename,
+                    status: sentResult?.status,
+                    id: sentResult?.id || sentResult?.message_id || null,
+                    detail: sentResult?.reason || sentResult?.message || null
+                });
                 break;
             } catch (error) {
                 lastError = error;
