@@ -23,10 +23,6 @@ const queuePrint = async (finalCollagePath, printCopies) => {
     const mediaType = borderless && /^PLAIN_/i.test(requestedMediaType)
         ? config.PRINTER_BORDERLESS_MEDIA_TYPE
         : requestedMediaType;
-    const overscan = Math.min(
-        120,
-        Math.max(100, Number(config.PRINT_BORDERLESS_OVERSCAN) || 106)
-    );
     const ink = config.PRINTER_INK || 'COLOR';
     const printerQueue = await printerService.resolveQueue();
     if (!printerQueue) throw new Error('Tidak ada printer CUPS yang terdeteksi');
@@ -40,8 +36,7 @@ const queuePrint = async (finalCollagePath, printCopies) => {
         ink,
         dpi: config.PRINT_DPI,
         borderless,
-        overscan: borderless ? overscan : null,
-        fitToPage: !borderless
+        fitToPage: true
     });
 
     await withResourceLock(
@@ -57,9 +52,9 @@ const queuePrint = async (finalCollagePath, printCopies) => {
                 '-o', `resolution=${config.PRINT_DPI}dpi`,
                 '-o', 'job-sheets=none,none',
                 '-o', 'position=center',
-                ...(borderless
-                    ? ['-o', `scaling=${overscan}`]
-                    : ['-o', 'fit-to-page']),
+                // Selalu muatkan satu gambar ke satu halaman. Opsi scaling >100
+                // membuat PNG high-res dianggap lebih besar dan ditile 2x2.
+                '-o', 'fit-to-page',
                 finalCollagePath
             ];
             execFile(
@@ -92,6 +87,14 @@ const processAndPrint = async ({
     userFolderPath,
     printCopies
 }) => {
+    const baseWidth = config.PRINT_WIDTH;
+    const baseHeight = config.PRINT_HEIGHT;
+    // Tetapkan ukuran fisik PNG tepat 4 x 6 inci. Contoh 2400x3600
+    // menghasilkan metadata 600 DPI dan tidak dianggap sebagai poster multi-page.
+    const outputDensity = Math.max(
+        72,
+        Math.round(Math.min(baseWidth / 4, baseHeight / 6))
+    );
     const finalCollagePath = path.join(
         userFolderPath,
         `Cetak_Frame_${Date.now()}.png`
@@ -101,8 +104,6 @@ const processAndPrint = async ({
     if (frameName && photos && photos.length > 0) {
         const frameConfig = framesData.find((frame) => frame.name === frameName);
         if (frameConfig) {
-            const baseWidth = config.PRINT_WIDTH;
-            const baseHeight = config.PRINT_HEIGHT;
             const frameFileName = path.basename(
                 new URL(frameConfig.asset_path, config.PUBLIC_BASE_URL).pathname
             );
@@ -159,7 +160,7 @@ const processAndPrint = async ({
                 }
             })
                 .composite(compositeOperations)
-                .withMetadata({ density: 450 })
+                .withMetadata({ density: outputDensity })
                 .png({ compressionLevel: 6, adaptiveFiltering: true })
                 .toFile(finalCollagePath);
 
@@ -173,7 +174,15 @@ const processAndPrint = async ({
             /^data:image\/\w+;base64,/,
             ''
         );
-        await fs.writeFile(finalCollagePath, Buffer.from(base64Data, 'base64'));
+        await sharp(Buffer.from(base64Data, 'base64'))
+            .resize({
+                width: baseWidth,
+                height: baseHeight,
+                fit: 'cover'
+            })
+            .withMetadata({ density: outputDensity })
+            .png({ compressionLevel: 6, adaptiveFiltering: true })
+            .toFile(finalCollagePath);
         renderingDone = true;
     }
 
