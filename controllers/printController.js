@@ -12,7 +12,7 @@ const framesData = require(config.FRAMES_DATA_FILE);
 const clamp = (value, minimum, maximum) => Math.min(maximum, Math.max(minimum, value));
 
 const preparePrintReadyImage = async (sourcePath, baseWidth, baseHeight, density) => {
-    const safeScale = clamp(Number(config.PRINT_SAFE_SCALE) || 0.97, 0.9, 1);
+    const safeScale = clamp(Number(config.PRINT_SAFE_SCALE) || 0.96, 0.9, 1);
     const contentWidth = Math.max(1, Math.round(baseWidth * safeScale));
     const contentHeight = Math.max(1, Math.round(baseHeight * safeScale));
     const pixelsPerMmX = baseWidth / (4 * 25.4);

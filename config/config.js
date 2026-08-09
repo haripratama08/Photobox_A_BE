@@ -62,8 +62,8 @@ module.exports = {
     // Kompensasi overscan borderless Epson. Konten utama diperkecil sedikit,
     // sedangkan warna piksel tepi diperpanjang sampai batas kertas agar tidak
     // muncul garis putih. Offset Y -1 mm menyamai Top margin -0,10 cm IrfanView.
-    PRINT_SAFE_SCALE: Number(process.env.PRINT_SAFE_SCALE || 0.97),
-    PRINT_OFFSET_X_MM: Number(process.env.PRINT_OFFSET_X_MM || 0),
+    PRINT_SAFE_SCALE: Number(process.env.PRINT_SAFE_SCALE || 0.96),
+    PRINT_OFFSET_X_MM: Number(process.env.PRINT_OFFSET_X_MM || 0.5),
     PRINT_OFFSET_Y_MM: Number(process.env.PRINT_OFFSET_Y_MM || -1),
     CAMERA_PORT: process.env.CAMERA_PORT || '',
     REQUIRE_CAMERA_PORT: process.env.REQUIRE_CAMERA_PORT !== 'false',
