@@ -9,6 +9,60 @@ const printerService = require('../services/printerService');
 
 const framesData = require(config.FRAMES_DATA_FILE);
 
+const clamp = (value, minimum, maximum) => Math.min(maximum, Math.max(minimum, value));
+
+const preparePrintReadyImage = async (sourcePath, baseWidth, baseHeight, density) => {
+    const safeScale = clamp(Number(config.PRINT_SAFE_SCALE) || 0.97, 0.9, 1);
+    const contentWidth = Math.max(1, Math.round(baseWidth * safeScale));
+    const contentHeight = Math.max(1, Math.round(baseHeight * safeScale));
+    const pixelsPerMmX = baseWidth / (4 * 25.4);
+    const pixelsPerMmY = baseHeight / (6 * 25.4);
+    const horizontalRoom = baseWidth - contentWidth;
+    const verticalRoom = baseHeight - contentHeight;
+    const offsetXPixels = Math.round(config.PRINT_OFFSET_X_MM * pixelsPerMmX);
+    const offsetYPixels = Math.round(config.PRINT_OFFSET_Y_MM * pixelsPerMmY);
+    const left = clamp(
+        Math.round(horizontalRoom / 2) + offsetXPixels,
+        0,
+        horizontalRoom
+    );
+    const top = clamp(
+        Math.round(verticalRoom / 2) + offsetYPixels,
+        0,
+        verticalRoom
+    );
+    const right = horizontalRoom - left;
+    const bottom = verticalRoom - top;
+    const parsed = path.parse(sourcePath);
+    const printPath = path.join(parsed.dir, `${parsed.name}_print${parsed.ext}`);
+
+    // `extendWith: copy` membuat bleed dari piksel paling tepi. Area yang
+    // dipotong mekanisme borderless tetap berwarna, tetapi seluruh desain asli
+    // berada di dalam area aman dan rasio 2:3 tidak berubah.
+    await sharp(sourcePath)
+        .resize({
+            width: contentWidth,
+            height: contentHeight,
+            fit: 'fill'
+        })
+        .extend({ top, bottom, left, right, extendWith: 'copy' })
+        .withMetadata({ density })
+        .png({ compressionLevel: 6, adaptiveFiltering: true })
+        .toFile(printPath);
+
+    logger.info('print_preview_ready', {
+        source: sourcePath,
+        file: printPath,
+        page: `${baseWidth}x${baseHeight}`,
+        content: `${contentWidth}x${contentHeight}`,
+        safeScale,
+        offsetXmm: config.PRINT_OFFSET_X_MM,
+        offsetYmm: config.PRINT_OFFSET_Y_MM,
+        bleed: { top, right, bottom, left }
+    });
+    return printPath;
+};
+
 const queuePrint = async (finalCollagePath, printCopies) => {
     const copies = Math.max(1, Number(printCopies) || 1);
     const configuredMedia = config.PRINTER_MEDIA || 'T4X6FULL';
@@ -52,6 +106,8 @@ const queuePrint = async (finalCollagePath, printCopies) => {
                 '-o', `resolution=${config.PRINT_DPI}dpi`,
                 '-o', 'job-sheets=none,none',
                 '-o', 'position=center',
+                '-o', 'orientation-requested=3',
+                '-o', 'sides=one-sided',
                 // Selalu muatkan satu gambar ke satu halaman. Opsi scaling >100
                 // membuat PNG high-res dianggap lebih besar dan ditile 2x2.
                 '-o', 'fit-to-page',
@@ -190,16 +246,23 @@ const processAndPrint = async ({
         throw new Error('Kolase cetak gagal dibuat');
     }
 
+    const printReadyPath = await preparePrintReadyImage(
+        finalCollagePath,
+        baseWidth,
+        baseHeight,
+        outputDensity
+    );
+
     console.log(
         `🖨️ Mengantrekan ${printCopies} salinan ke ${config.PRINTER_NAME}...`
     );
     try {
-        await queuePrint(finalCollagePath, printCopies);
+        await queuePrint(printReadyPath, printCopies);
     } catch (error) {
         console.log(
             `⚠️ [PRINT] Gagal masuk antrean ${config.PRINTER_NAME}: ${error.message}`
         );
-        logger.error('print_pipeline_failed', { printer: config.PRINTER_NAME, file: finalCollagePath, error: error.message });
+        logger.error('print_pipeline_failed', { printer: config.PRINTER_NAME, file: printReadyPath, error: error.message });
     }
 
     return finalCollagePath;

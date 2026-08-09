@@ -59,6 +59,12 @@ module.exports = {
     PRINT_WIDTH: Number(process.env.PRINT_WIDTH || 2400),
     PRINT_HEIGHT: Number(process.env.PRINT_HEIGHT || 3600),
     PRINT_DPI: Number(process.env.PRINT_DPI || 720),
+    // Kompensasi overscan borderless Epson. Konten utama diperkecil sedikit,
+    // sedangkan warna piksel tepi diperpanjang sampai batas kertas agar tidak
+    // muncul garis putih. Offset Y -1 mm menyamai Top margin -0,10 cm IrfanView.
+    PRINT_SAFE_SCALE: Number(process.env.PRINT_SAFE_SCALE || 0.97),
+    PRINT_OFFSET_X_MM: Number(process.env.PRINT_OFFSET_X_MM || 0),
+    PRINT_OFFSET_Y_MM: Number(process.env.PRINT_OFFSET_Y_MM || -1),
     CAMERA_PORT: process.env.CAMERA_PORT || '',
     REQUIRE_CAMERA_PORT: process.env.REQUIRE_CAMERA_PORT !== 'false',
     REQUIRE_PRINTER: process.env.REQUIRE_PRINTER !== 'false',
@@ -98,6 +104,16 @@ module.exports = {
     MIMACH_SESSION: process.env.MIMACH_SESSION || 'box-a',
     MIMACH_MEDIA_BASE_URL: (process.env.MIMACH_MEDIA_BASE_URL || `${process.env.PUBLIC_BASE_URL || `http://127.0.0.1:${port}`}/photos`).replace(/\/$/, ''),
     MIMACH_REQUEST_DELAY_MS: Number(process.env.MIMACH_REQUEST_DELAY_MS || 900),
+    WHATSAPP_OUTBOX_FILE: resolveApiPath(
+        process.env.WHATSAPP_OUTBOX_FILE,
+        'state/whatsapp-outbox.json'
+    ),
+    WHATSAPP_OUTBOX_RETRY_DELAY_MS: Number(
+        process.env.WHATSAPP_OUTBOX_RETRY_DELAY_MS || 15000
+    ),
+    WHATSAPP_OUTBOX_MAX_RETRIES: Number(
+        process.env.WHATSAPP_OUTBOX_MAX_RETRIES || 10
+    ),
     LAUNCHER_PID: Number(process.env.PHOTOBOX_LAUNCHER_PID || 0) || null,
     EMAIL_USER: process.env.EMAIL_USER,
     EMAIL_PASS: process.env.EMAIL_PASS
