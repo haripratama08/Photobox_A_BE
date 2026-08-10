@@ -43,7 +43,8 @@ const preparePrintReadyImage = async (sourcePath, baseWidth, baseHeight, density
         .resize({
             width: contentWidth,
             height: contentHeight,
-            fit: 'fill'
+            fit: 'fill',
+            kernel: sharp.kernel.lanczos3
         })
         .extend({ top, bottom, left, right, extendWith: 'copy' })
         .withMetadata({ density })
@@ -183,10 +184,12 @@ const processAndPrint = async ({
                 if (fs.existsSync(absolutePath)) {
                     compositeOperations.push({
                         input: await sharp(absolutePath)
+                            .autoOrient()
                             .resize({
                                 width: slotWidth,
                                 height: slotHeight,
-                                fit: 'cover'
+                                fit: 'cover',
+                                kernel: sharp.kernel.lanczos3
                             })
                             .toBuffer(),
                         top: Math.round(baseHeight * slot.t),
@@ -198,7 +201,10 @@ const processAndPrint = async ({
             if (fs.existsSync(frameLocalPath)) {
                 compositeOperations.push({
                     input: await sharp(frameLocalPath)
-                        .resize(baseWidth, baseHeight)
+                        .resize(baseWidth, baseHeight, {
+                            fit: 'fill',
+                            kernel: sharp.kernel.lanczos3
+                        })
                         .toBuffer(),
                     top: 0,
                     left: 0
@@ -234,7 +240,8 @@ const processAndPrint = async ({
             .resize({
                 width: baseWidth,
                 height: baseHeight,
-                fit: 'cover'
+                fit: 'cover',
+                kernel: sharp.kernel.lanczos3
             })
             .withMetadata({ density: outputDensity })
             .png({ compressionLevel: 6, adaptiveFiltering: true })

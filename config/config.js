@@ -56,8 +56,9 @@ module.exports = {
     PRINTER_BORDERLESS: process.env.PRINTER_BORDERLESS !== 'false',
     PRINTER_BORDERLESS_MEDIA_TYPE: process.env.PRINTER_BORDERLESS_MEDIA_TYPE || 'GLOSSYPHOTO_HIGH',
     PRINTER_INK: process.env.PRINTER_INK || 'COLOR',
-    PRINT_WIDTH: Number(process.env.PRINT_WIDTH || 2400),
-    PRINT_HEIGHT: Number(process.env.PRINT_HEIGHT || 3600),
+    // Ukuran 4 x 6 inci pada 720 DPI.
+    PRINT_WIDTH: Number(process.env.PRINT_WIDTH || 2880),
+    PRINT_HEIGHT: Number(process.env.PRINT_HEIGHT || 4320),
     PRINT_DPI: Number(process.env.PRINT_DPI || 720),
     // Kompensasi overscan borderless Epson. Konten utama diperkecil sedikit,
     // sedangkan warna piksel tepi diperpanjang sampai batas kertas agar tidak

@@ -54,24 +54,21 @@ const mediaUrl = (filePath) => {
 };
 
 const sendAttachment = (target, attachment, caption, attachmentUrl) => {
-    const extension = path.extname(attachment.filename).toLowerCase();
-    const image = ['.jpg', '.jpeg', '.png', '.webp'].includes(extension);
     const common = {
         session: config.MIMACH_SESSION,
         to: target,
         text: caption || ' ',
         is_group: false
     };
-    return image
-        ? requestJson('/message/send-image', { ...common, image_url: attachmentUrl })
-        : requestJson('/message/send-document', {
-            ...common,
-            document_url: attachmentUrl,
-            document_name: attachment.filename
-        });
+    // Kirim JPG/PNG sebagai dokumen agar WhatsApp tidak mengompresi gambar.
+    return requestJson('/message/send-document', {
+        ...common,
+        document_url: attachmentUrl,
+        document_name: attachment.filename
+    });
 };
 
-const sendWhatsappJob = async (userWA, userName, attachments) => {
+const sendWhatsappJob = async (userWA, userName, attachments, options = {}) => {
     if (!userWA || attachments.length === 0) return { skipped: true };
     if (!config.ENABLE_WHATSAPP || config.WHATSAPP_PROVIDER !== 'mimach') {
         return { skipped: true };
@@ -80,10 +77,12 @@ const sendWhatsappJob = async (userWA, userName, attachments) => {
     if (!target) throw new Error('Nomor WhatsApp tidak valid');
     const greeting = `Halo kak *${userName}*! ✨\nFoto photobox kamu udah siap nih 🥳\n\nMakasih yaa udah nyimpan kenangan bareng kita. Ditunggu kedatangannya lagi! 📸❤️`;
     const results = [];
+    const attachmentOffset = Math.max(0, Number(options.attachmentOffset) || 0);
 
     for (let index = 0; index < attachments.length; index += 1) {
         const attachment = attachments[index];
-        const caption = index === 0 ? greeting : `Foto ${index + 1}`;
+        const attachmentIndex = attachmentOffset + index;
+        const caption = attachmentIndex === 0 ? greeting : `Foto ${attachmentIndex + 1}`;
         let attachmentUrl = null;
         try {
             await fs.access(attachment.path);
@@ -94,11 +93,17 @@ const sendWhatsappJob = async (userWA, userName, attachments) => {
                 session: config.MIMACH_SESSION,
                 filename: attachment.filename,
                 media_url: attachmentUrl,
+                send_mode: 'document',
                 status: true,
                 detail: typeof payload === 'object' ? payload.message || payload.detail || null : payload
             });
-            logger.info('whatsapp_file_sent', { provider: 'mimach', target, filename: attachment.filename });
-            results.push({ filename: attachment.filename, queued: true, result: payload });
+            logger.info('whatsapp_file_sent', {
+                provider: 'mimach', target, filename: attachment.filename,
+                send_mode: 'document'
+            });
+            const result = { filename: attachment.filename, queued: true, result: payload };
+            results.push(result);
+            await options.onAttachmentResult?.(result);
         } catch (error) {
             logger.error('whatsapp_file_failed', {
                 provider: 'mimach',
@@ -106,9 +111,12 @@ const sendWhatsappJob = async (userWA, userName, attachments) => {
                 session: config.MIMACH_SESSION,
                 filename: attachment.filename,
                 media_url: attachmentUrl,
+                send_mode: 'document',
                 error: error.message
             });
-            results.push({ filename: attachment.filename, queued: false, error: error.message });
+            const result = { filename: attachment.filename, queued: false, error: error.message };
+            results.push(result);
+            await options.onAttachmentResult?.(result);
         }
         await sleep(config.MIMACH_REQUEST_DELAY_MS);
     }
@@ -119,9 +127,9 @@ const sendWhatsappJob = async (userWA, userName, attachments) => {
     return { skipped: false, target, results };
 };
 
-const sendWhatsappMsg = (userWA, userName, attachments) => withResourceLock(
+const sendWhatsappMsg = (userWA, userName, attachments, options = {}) => withResourceLock(
     `mimach:${config.MIMACH_API_URL}:${config.MIMACH_SESSION}`,
-    () => sendWhatsappJob(userWA, userName, attachments),
+    () => sendWhatsappJob(userWA, userName, attachments, options),
     { label: 'pengiriman Mimach', timeoutMs: 300000, staleMs: 600000 }
 );
 

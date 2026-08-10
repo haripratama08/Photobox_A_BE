@@ -1,5 +1,4 @@
 const chokidar = require('chokidar');
-const sharp = require('sharp');
 const fs = require('fs-extra');
 const path = require('path');
 const config = require('../config/config');
@@ -28,14 +27,10 @@ const initWatcher = (io) => {
 
         setTimeout(async () => {
             try {
-                // Kompresi foto berkualitas tinggi dengan Sharp di Linux
-                await sharp(filePath)
-                    .resize({ width: 1920, withoutEnlargement: true })
-                    .jpeg({ quality: 80, mozjpeg: true })
-                    .toFile(newFilePath);
-
-                fs.unlinkSync(filePath);
-                console.log(`📸 [LINUX INOTIFY] Foto dikompres & diamankan: /${activeUserFolder}/${filename}`);
+                // Pertahankan byte dan resolusi asli kamera. Versi sebelumnya
+                // mengecilkan foto ke 1920px dan JPEG 80% sebelum dicetak.
+                await fs.move(filePath, newFilePath, { overwrite: true });
+                console.log(`📸 [LINUX INOTIFY] Foto asli diamankan: /${activeUserFolder}/${filename}`);
 
                 io.emit('photo-ready', {
                     url: `${config.PUBLIC_BASE_URL}/photos/${encodeURIComponent(activeUserFolder)}/${filename}`,
