@@ -184,7 +184,9 @@ const processAndPrint = async ({
                 if (fs.existsSync(absolutePath)) {
                     compositeOperations.push({
                         input: await sharp(absolutePath)
-                            .autoOrient()
+                            // Sharp 0.33 belum memiliki autoOrient(). rotate()
+                            // tanpa argumen menerapkan orientasi EXIF yang sama.
+                            .rotate()
                             .resize({
                                 width: slotWidth,
                                 height: slotHeight,
