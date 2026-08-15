@@ -1,6 +1,7 @@
 const { execFile } = require('child_process');
 const config = require('../config/config');
 const cameraService = require('./cameraService');
+const whatsappOutbox = require('./whatsappOutbox');
 
 let heartbeatTimer = null;
 let liveViewBalanceTimer = null;
@@ -33,18 +34,46 @@ const getPrinterStatus = () => new Promise((resolve) => {
     });
 });
 
+const reportCommandResult = (command, success, result) => postJson('/api/heartbeat/command-result', {
+    box_id: config.BOX_ID,
+    command_id: command.id,
+    success,
+    result
+});
+
+const processDashboardCommands = async (commands) => {
+    for (const command of commands || []) {
+        try {
+            const payload = command.payload || {};
+            if (command.type !== 'whatsapp_outbox_retry') {
+                throw new Error(`Perintah dashboard tidak dikenal: ${command.type}`);
+            }
+            const result = whatsappOutbox.retry(payload.job_id);
+            await reportCommandResult(command, true, result);
+        } catch (error) {
+            try {
+                await reportCommandResult(command, false, { error: error.message });
+            } catch (reportError) {
+                console.log(`âš ï¸ Hasil perintah dashboard ${config.BOX_ID} gagal dilaporkan: ${reportError.message}`);
+            }
+        }
+    }
+};
+
 const sendHeartbeat = async () => {
     const [camera, printerStatus] = await Promise.all([
         cameraService.getStatus(),
         getPrinterStatus()
     ]);
 
-    await postJson('/api/heartbeat', {
+    const response = await postJson('/api/heartbeat', {
         box_id: config.BOX_ID,
         camera_status: camera.connected ? 'Online' : 'Offline',
         printer_status: printerStatus,
-        launcher_pid: config.LAUNCHER_PID
+        launcher_pid: config.LAUNCHER_PID,
+        whatsapp_outbox: whatsappOutbox.getStatus()
     });
+    await processDashboardCommands(response.commands);
 };
 
 const startHeartbeat = () => {

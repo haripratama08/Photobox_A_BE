@@ -6,7 +6,8 @@ const config = require('../config/config');
 const framesData = require(config.FRAMES_DATA_FILE);
 const session = require('../state/session');
 const { processAndPrint } = require('../controllers/printController');
-const { sendWhatsappMsg, getWhatsappStatus } = require('../services/whatsapp');
+const { getWhatsappStatus } = require('../services/whatsapp');
+const whatsappOutbox = require('../services/whatsappOutbox');
 const { sendEmailMsg } = require('../services/email');
 const cameraService = require('../services/cameraService');
 const dashboardClient = require('../services/dashboardClient');
@@ -248,16 +249,15 @@ module.exports = (io) => {
                 }
                 if (userWA && attachments.length > 0) {
                     console.log(`📱 Mengirim WhatsApp ke ${userWA}...`);
-                    const whatsappResult = await sendWhatsappMsg(
+                    const outboxResult = whatsappOutbox.enqueue({
                         userWA,
                         userName,
                         attachments
-                    );
-                    const sentCount = whatsappResult.results
-                        ? whatsappResult.results.filter((item) => item.queued).length
-                        : 0;
+                    });
                     console.log(
-                        `[${String(config.WHATSAPP_PROVIDER).toUpperCase()}] ${sentCount}/${attachments.length} file diterima gateway.`
+                        `[${String(config.WHATSAPP_PROVIDER).toUpperCase()}] `
+                        + `${outboxResult.files || 0} file masuk antrean permanen `
+                        + `(ID ${outboxResult.job_id || '-'})`
                     );
                 }
 

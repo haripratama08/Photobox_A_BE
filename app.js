@@ -13,15 +13,31 @@ const watcherService = require('./services/watcher');
 const cameraService = require('./services/cameraService');
 const dashboardClient = require('./services/dashboardClient');
 const deviceAgent = require('./services/deviceAgent');
+const whatsappOutbox = require('./services/whatsappOutbox');
 
 fs.ensureDirSync(config.BASE_PHOTO_FOLDER);
 fs.ensureDirSync(config.FRAMES_FOLDER);
+app.use(express.json({ limit: '1mb' }));
 app.use('/photos', express.static(config.BASE_PHOTO_FOLDER));
 app.use('/frames', express.static(config.FRAMES_FOLDER));
 
 app.get('/device-status', async (req, res) => {
     try { res.json(await deviceAgent.getStatus()); }
     catch (error) { res.status(500).json({ connected: false, error: error.message }); }
+});
+
+app.get('/whatsapp-outbox', (req, res) => {
+    res.json(whatsappOutbox.getStatus());
+});
+
+app.post('/whatsapp-outbox/:jobId/retry', (req, res) => {
+    try { res.json(whatsappOutbox.retry(req.params.jobId)); }
+    catch (error) { res.status(400).json({ error: error.message }); }
+});
+
+app.post('/whatsapp-outbox/resend-folder', (req, res) => {
+    try { res.json(whatsappOutbox.enqueueFolder(req.body || {})); }
+    catch (error) { res.status(400).json({ error: error.message }); }
 });
 
 app.post('/device/apply-touch-mapping', async (req, res) => {
@@ -55,6 +71,7 @@ app.get('/preview-frame', (req, res) => {
 
 socketHandler(io);
 watcherService.initWatcher(io);
+whatsappOutbox.start();
 
 http.listen(config.PORT, config.HOST, () => {
     console.log(`================================================`);

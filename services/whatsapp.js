@@ -185,7 +185,7 @@ const getWhatsappStatus = async () => {
     return cachedStatus;
 };
 
-const sendWhatsappJob = async (userWA, userName, attachments) => {
+const sendWhatsappJob = async (userWA, userName, attachments, options = {}) => {
     if (!userWA || attachments.length === 0) return { skipped: true };
     if (!config.ENABLE_WHATSAPP || !config.FONNTE_TOKEN) {
         console.log(`⚠️ Fonnte belum aktif untuk ${config.BOX_ID}.`);
@@ -198,13 +198,14 @@ const sendWhatsappJob = async (userWA, userName, attachments) => {
     const greetingCaption = `Halo kak *${userName}*! ✨\nFoto photobox kamu udah siap nih 🥳\n\nMakasih yaa udah nyimpan kenangan bareng kita. Ditunggu kedatangannya lagi! 📸❤️`;
 
     const results = [];
-    let isFirstFile = true;
-    let photoCounter = 1;
+    const attachmentOffset = Math.max(0, Number(options.attachmentOffset) || 0);
 
-    for (const attachment of attachments) {
-        const caption = isFirstFile
+    for (let index = 0; index < attachments.length; index += 1) {
+        const attachment = attachments[index];
+        const attachmentIndex = attachmentOffset + index;
+        const caption = attachmentIndex === 0
             ? greetingCaption
-            : `Foto ${photoCounter}`;
+            : `Foto ${attachmentIndex + 1}`;
         let sentResult = null;
         let lastError = null;
 
@@ -232,19 +233,21 @@ const sendWhatsappJob = async (userWA, userName, attachments) => {
         }
 
         if (sentResult) {
-            results.push({ filename: attachment.filename, queued: true, result: sentResult });
+            const result = { filename: attachment.filename, queued: true, result: sentResult };
+            results.push(result);
             console.log(`[FONNTE] File ${attachment.filename} diterima API Fonnte.`);
             logger.info('whatsapp_file_sent', { target, filename: attachment.filename });
-            isFirstFile = false;
-            photoCounter += 1;
+            await options.onAttachmentResult?.(result);
         } else {
-            results.push({
+            const result = {
                 filename: attachment.filename,
                 queued: false,
                 error: lastError?.message || 'Unggahan ditolak tanpa alasan'
-            });
+            };
+            results.push(result);
             console.log(`[FONNTE] File ${attachment.filename} tidak terkirim.`);
             logger.error('whatsapp_file_failed', { target, filename: attachment.filename, error: lastError?.message });
+            await options.onAttachmentResult?.(result);
         }
         await sleep(config.FONNTE_REQUEST_DELAY_MS);
     }
@@ -264,18 +267,18 @@ const sendWhatsappJob = async (userWA, userName, attachments) => {
     return { skipped: false, target, results };
 };
 
-const sendWhatsappMsg = (userWA, userName, attachments) => {
+const sendWhatsappMsg = (userWA, userName, attachments, options = {}) => {
     if (!userWA || attachments.length === 0) return Promise.resolve({ skipped: true });
     if (config.WHATSAPP_PROVIDER === 'mimach') {
-        return mimach.sendWhatsappMsg(userWA, userName, attachments);
+        return mimach.sendWhatsappMsg(userWA, userName, attachments, options);
     }
     if (!config.ENABLE_WHATSAPP || !config.FONNTE_TOKEN) {
-        return sendWhatsappJob(userWA, userName, attachments);
+        return sendWhatsappJob(userWA, userName, attachments, options);
     }
 
     return withResourceLock(
         `fonnte:${config.FONNTE_TOKEN}`,
-        () => sendWhatsappJob(userWA, userName, attachments),
+        () => sendWhatsappJob(userWA, userName, attachments, options),
         {
             label: 'pengiriman Fonnte',
             timeoutMs: 300000,

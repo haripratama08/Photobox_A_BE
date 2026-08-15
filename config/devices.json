@@ -9,9 +9,10 @@
     "model": "Canon EOS 700D"
   },
   "printer": {
-    "queue": "PHOTO_PRINTER",
-    "preferred_make_model": "",
-    "device_uri": ""
+    "queue": "PHOTO_A",
+    "preferred_make_model": "Epson L8050",
+    "device_uri": "",
+    "mac_address": "dc:cd:2f:ea:f5:a2"
   },
   "display": {
     "connector": "",

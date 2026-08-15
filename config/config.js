@@ -50,6 +50,10 @@ module.exports = {
     ),
     LOG_FILE: resolveApiPath(process.env.LOG_FILE, 'state/logs/photobox.jsonl'),
     PRINTER_NAME: process.env.PRINTER_NAME || "L8050_Series_Network",
+    PRINTER_AUTO_REBIND: process.env.PRINTER_AUTO_REBIND !== 'false',
+    PRINTER_USE_SUDO: process.env.PRINTER_USE_SUDO !== 'false',
+    PRINTER_SCAN_TIMEOUT_MS: Number(process.env.PRINTER_SCAN_TIMEOUT_MS || 300),
+    PRINTER_SCAN_RETRY_MS: Number(process.env.PRINTER_SCAN_RETRY_MS || 30000),
     // Pada PPD Epson ESC/P-R, awalan T menandakan ukuran tanpa batas.
     PRINTER_MEDIA: process.env.PRINTER_MEDIA || 'T4X6FULL',
     PRINTER_MEDIA_TYPE: process.env.PRINTER_MEDIA_TYPE || 'PLAIN_HIGH',
