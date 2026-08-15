@@ -3,7 +3,6 @@ const sharp = require('sharp');
 const path = require('path');
 const { execFile } = require('child_process');
 const config = require('../config/config');
-const framesData = require(config.FRAMES_DATA_FILE);
 const session = require('../state/session');
 const { processAndPrint } = require('../controllers/printController');
 const { getWhatsappStatus } = require('../services/whatsapp');
@@ -15,6 +14,20 @@ const logger = require('../services/logger');
 const printerService = require('../services/printerService');
 
 let CONFIG_MIRROR = false;
+
+const loadFramesData = () => {
+    // Muat ulang katalog agar frame baru dapat terdeteksi tanpa restart API.
+    delete require.cache[require.resolve(config.FRAMES_DATA_FILE)];
+    return require(config.FRAMES_DATA_FILE);
+};
+
+const buildPublicFramesData = () => loadFramesData().map((frame) => {
+    const parsed = new URL(frame.asset_path, config.PUBLIC_BASE_URL);
+    return {
+        ...frame,
+        asset_path: `${config.PUBLIC_BASE_URL}${parsed.pathname}`
+    };
+});
 
 const checkPrinter = () => printerService.status();
 
@@ -33,6 +46,7 @@ const checkWritableStorage = async (folderPath, label) => {
 
 const checkFrameAssets = async () => {
     try {
+        const framesData = loadFramesData();
         await fs.ensureDir(config.FRAMES_FOLDER);
         const missing = framesData
             .map((frame) => {
@@ -102,14 +116,6 @@ const runPreflight = async () => {
     };
 };
 
-const publicFramesData = framesData.map((frame) => {
-    const parsed = new URL(frame.asset_path, config.PUBLIC_BASE_URL);
-    return {
-        ...frame,
-        asset_path: `${config.PUBLIC_BASE_URL}${parsed.pathname}`
-    };
-});
-
 module.exports = (io) => {
     io.on('connection', async (socket) => {
         console.log(`📱 Frontend Flutter ${config.BOX_ID} terhubung!`);
@@ -164,7 +170,12 @@ module.exports = (io) => {
         });
 
         socket.on('get-frames', () => {
-            socket.emit('frames-list', publicFramesData);
+            try {
+                socket.emit('frames-list', buildPublicFramesData());
+            } catch (error) {
+                logger.error('frames_catalog_failed', { error: error.message });
+                socket.emit('frames-list', []);
+            }
         });
 
         socket.on('start-liveview', () => {
