@@ -10,6 +10,6 @@ services:
       - ./wa_credentials:/app/wa_credentials
       - ./media:/app/media
     environment:
-      KEY: ganti-dengan-key-sendiri
+      KEY: diceritakita
       WEBHOOK_BASE_URL: ""
       REDIS_URL: ""
