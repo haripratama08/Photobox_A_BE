@@ -14,6 +14,7 @@ TimeoutStopSec=15
 Environment=DISPLAY=:0
 Environment=XDG_SESSION_TYPE=x11
 Environment=PHOTOBOX_SOFTWARE_RENDERING=false
+Environment=PHOTOBOX_DISPLAY_MODE=1280x800
 
 [Install]
 WantedBy=default.target
