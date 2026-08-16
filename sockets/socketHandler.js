@@ -14,6 +14,17 @@ const logger = require('../services/logger');
 const printerService = require('../services/printerService');
 
 let CONFIG_MIRROR = false;
+const autoPrintedFolders = new Set();
+
+const sessionRawPhotoUrls = (folderName) => {
+    const userFolderPath = path.join(config.BASE_PHOTO_FOLDER, folderName);
+    if (!fs.existsSync(userFolderPath)) return [];
+    return fs.readdirSync(userFolderPath)
+        .filter((file) => /\.(jpe?g|png|webp)$/i.test(file))
+        .filter((file) => !file.startsWith('Cetak_Frame_') && !file.endsWith('_mirror.jpg'))
+        .sort((left, right) => left.localeCompare(right))
+        .map((file) => `${config.PUBLIC_BASE_URL}/photos/${encodeURIComponent(folderName)}/${encodeURIComponent(file)}`);
+};
 
 const loadFramesData = () => {
     // Muat ulang katalog agar frame baru dapat terdeteksi tanpa restart API.
@@ -141,6 +152,7 @@ module.exports = (io) => {
         socket.on('set-active-user', (userName) => {
             const safeName = userName.replace(/[^a-zA-Z0-9 \-]/g, "_").trim();
             session.setActiveUserFolder(safeName || "Guest");
+            autoPrintedFolders.delete(session.getActiveUserFolder());
             console.log(`\n👤 SESI FOTO: [${session.getActiveUserFolder()}]`);
         });
 
@@ -190,6 +202,48 @@ module.exports = (io) => {
         socket.on('stop-liveview', () => {
             cameraService.stopLiveView();
             dashboardClient.setLiveViewActive(false);
+        });
+
+        socket.on('session-expired', async (data = {}) => {
+            const activeFolder = session.getActiveUserFolder();
+            if (autoPrintedFolders.has(activeFolder)) return;
+
+            const photos = sessionRawPhotoUrls(activeFolder);
+            if (!photos.length) {
+                logger.info('session_expired_without_photos', { folder: activeFolder });
+                return;
+            }
+
+            autoPrintedFolders.add(activeFolder);
+            try {
+                const printCopies = Math.max(1, Number(data.printCopies) || 1);
+                const userFolderPath = path.join(config.BASE_PHOTO_FOLDER, activeFolder);
+                logger.info('session_expired_auto_print_started', {
+                    folder: activeFolder,
+                    photos: photos.length,
+                    frameName: data.frameName || null,
+                    printCopies
+                });
+                await processAndPrint({
+                    frameName: data.frameName,
+                    photos,
+                    userFolderPath,
+                    printCopies
+                });
+                logger.info('session_expired_auto_print_finished', {
+                    folder: activeFolder,
+                    photos: photos.length,
+                    printCopies
+                });
+                dashboardClient.reportSession(printCopies).catch((error) => {
+                    logger.warn('session_expired_dashboard_report_failed', { error: error.message });
+                });
+            } catch (error) {
+                logger.error('session_expired_auto_print_failed', {
+                    folder: activeFolder,
+                    error: error.message
+                });
+            }
         });
 
         socket.on('send-results', async (data) => {
