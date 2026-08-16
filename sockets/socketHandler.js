@@ -26,6 +26,16 @@ const sessionRawPhotoUrls = (folderName) => {
         .map((file) => `${config.PUBLIC_BASE_URL}/photos/${encodeURIComponent(folderName)}/${encodeURIComponent(file)}`);
 };
 
+const sessionRawAttachments = (folderName) => {
+    const userFolderPath = path.join(config.BASE_PHOTO_FOLDER, folderName);
+    if (!fs.existsSync(userFolderPath)) return [];
+    return fs.readdirSync(userFolderPath)
+        .filter((file) => /\.(jpe?g|png|webp)$/i.test(file))
+        .filter((file) => !file.startsWith('Cetak_Frame_') && !file.endsWith('_mirror.jpg'))
+        .sort((left, right) => left.localeCompare(right))
+        .map((file) => ({ filename: file, path: path.join(userFolderPath, file) }));
+};
+
 const loadFramesData = () => {
     // Muat ulang katalog agar frame baru dapat terdeteksi tanpa restart API.
     delete require.cache[require.resolve(config.FRAMES_DATA_FILE)];
@@ -224,12 +234,35 @@ module.exports = (io) => {
                     frameName: data.frameName || null,
                     printCopies
                 });
-                await processAndPrint({
+                // processAndPrint membuat dua file: Cetak_Frame_*.png untuk
+                // pengiriman WhatsApp, serta *_print.png khusus printer.
+                // Hanya versi *_print.png yang masuk ke CUPS.
+                const finalCollagePath = await processAndPrint({
                     frameName: data.frameName,
                     photos,
                     userFolderPath,
                     printCopies
                 });
+                const attachments = [
+                    { filename: path.basename(finalCollagePath), path: finalCollagePath },
+                    ...sessionRawAttachments(activeFolder)
+                ];
+                const userName = data.userName || activeFolder;
+                if (data.userEmail && attachments.length) {
+                    await sendEmailMsg(data.userEmail, userName, attachments);
+                }
+                if (data.userWA && attachments.length) {
+                    const outboxResult = whatsappOutbox.enqueue({
+                        userWA: data.userWA,
+                        userName,
+                        attachments
+                    });
+                    logger.info('session_expired_whatsapp_queued', {
+                        folder: activeFolder,
+                        job_id: outboxResult.job_id || null,
+                        files: outboxResult.files || 0
+                    });
+                }
                 logger.info('session_expired_auto_print_finished', {
                     folder: activeFolder,
                     photos: photos.length,
