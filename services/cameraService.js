@@ -12,8 +12,9 @@ let targetLiveViewFps = Math.max(1, Math.min(120, config.LIVEVIEW_TARGET_FPS));
 let liveViewGeneration = 0;
 
 const cameraArgs = (args) => {
-    if (!config.CAMERA_PORT) return args;
-    return ['--port', config.CAMERA_PORT, ...args];
+    if (config.CAMERA_PORT) return ['--port', config.CAMERA_PORT, ...args];
+    if (config.CAMERA_MODEL) return ['--camera', config.CAMERA_MODEL, ...args];
+    return args;
 };
 
 const runGphoto = (args, options, callback) => {
@@ -55,7 +56,8 @@ let lastCameraResetAt = 0;
 const detectCamera = () => new Promise((resolve) => {
     // Nomor bus dapat berubah setelah USB reset, jadi jangan gunakan CAMERA_PORT.
     execFile('gphoto2', ['--auto-detect'], { timeout: 5000 }, (error, stdout) => {
-        resolve(!error && /Canon|EOS/i.test(stdout || ''));
+        const expected = (config.CAMERA_MODEL || 'Canon').toLowerCase();
+        resolve(!error && Boolean(stdout) && stdout.toLowerCase().includes(expected));
     });
 });
 
@@ -78,7 +80,7 @@ const resetCameraUsb = async (reason) => {
         // USB reset dari libgphoto2 menggantikan cabut-pasang pada sisi host.
         // Exit code diabaikan karena perangkat dapat hilang sesaat saat reset sukses.
         await new Promise((resolve) => {
-            execFile('gphoto2', ['--reset'], { timeout: 10000 }, () => resolve());
+            execFile('gphoto2', cameraArgs(['--reset']), { timeout: 10000 }, () => resolve());
         });
         await delay(config.CAMERA_RESET_SETTLE_MS);
 
