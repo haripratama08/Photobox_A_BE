@@ -5,7 +5,7 @@
     "serial": "",
     "vendor_id": "04a9",
     "product_id": "",
-    "usb_path": "",
+    "usb_path": "usb:001,011",
     "model": "Canon EOS 700D"
   },
   "printer": {
@@ -15,7 +15,7 @@
     "mac_address": "dc:cd:2f:ea:f5:a2"
   },
   "display": {
-    "connector": "",
+    "connector": "HDMI-A-1",
     "edid": ""
   },
   "touchscreen": {
@@ -23,6 +23,6 @@
     "vendor_id": "",
     "product_id": "",
     "usb_path": "",
-    "map_to_connector": ""
+    "map_to_connector": "HDMI-A-1"
   }
 }
